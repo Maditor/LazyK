@@ -1,0 +1,75 @@
+"""LazyK – translate comic pages on screen and paint the translation over the bubbles.
+
+Usage:
+  python main.py                 normal run (hotkey mode)
+  python main.py --demo          calibration boxes, no API calls (checks DPI / capture area)
+  python main.py --image p.png   offline test: OCR + translate one image, writes p_translated.png
+"""
+import argparse
+import logging
+import os
+import sys
+import threading
+from logging.handlers import RotatingFileHandler
+
+from app import winapi
+
+# Must happen before Tk / mss create any window
+winapi.set_dpi_awareness()
+
+from app.config import Settings, app_dir  # noqa: E402
+
+
+def setup_logging():
+    log_dir = os.path.join(app_dir(), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    handlers = [RotatingFileHandler(os.path.join(log_dir, "lazyk.log"),
+                                    maxBytes=1_000_000, backupCount=3, encoding="utf-8")]
+    if sys.stderr and not getattr(sys, "frozen", False):
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, handlers=handlers,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    def excepthook(*args):
+        logging.getLogger("crash").critical("Unhandled exception", exc_info=args if len(args) == 3 else None)
+    sys.excepthook = excepthook
+    threading.excepthook = lambda a: logging.getLogger("crash").critical(
+        "Unhandled thread exception", exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
+
+def run_image(path, settings):
+    from PIL import Image
+    from app.pipeline import Pipeline
+    from app.preview import render_preview
+
+    img = Image.open(path).convert("RGB")
+    items, _ = Pipeline(settings).process(img, threading.Event(), lambda st, m: print(f"[{st}] {m}"))
+    for i, it in enumerate(items, 1):
+        print(f"{i:>2}. {it['box']}\n    {it['text']}\n    -> {it.get('translation', '')}")
+    out = os.path.splitext(path)[0] + "_translated.png"
+    render_preview(img, items, settings).save(out)
+    print("Saved", out)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="LazyK")
+    ap.add_argument("--demo", action="store_true", help="show calibration boxes, no API")
+    ap.add_argument("--image", help="translate one image file and save a preview")
+    args = ap.parse_args()
+
+    setup_logging()
+    settings = Settings()
+    logging.info("Start (settings: %s)", settings.path)
+
+    if args.image:
+        if not settings.has_credentials():
+            sys.exit("Add a Gemini key or Cloudflare token first (run the app and click the gear icon).")
+        run_image(args.image, settings)
+        return
+
+    from app.controller import App
+    App(settings, demo=args.demo).run()
+
+
+if __name__ == "__main__":
+    main()
