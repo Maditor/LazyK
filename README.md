@@ -43,7 +43,7 @@ Không cần card đồ hoạ mạnh: mọi xử lý AI đều chạy trên máy
 
 ### Cách 1: Dùng bản `.exe` (dễ nhất)
 
-1. Vào mục **[Releases](../../releases)**, tải file `LazyK-windows.zip` mới nhất.
+1. Vào mục **[Releases](https://github.com/Maditor/LazyK/releases)**, tải file `LazyK-windows.zip` mới nhất.
 2. Giải nén ra một thư mục bất kỳ, ví dụ `D:\LazyK`.
 3. Mở **`LazyK.exe`**.
 
@@ -55,7 +55,7 @@ Không cần card đồ hoạ mạnh: mọi xử lý AI đều chạy trên máy
    Khi cài, **tick ô "Add python.exe to PATH"**; các mục khác để mặc định (cần có *tcl/tk* và *py launcher*).
 2. Tải mã nguồn: bấm **Code → Download ZIP** rồi giải nén, hoặc:
    ```bat
-   git clone https://github.com/<tên-của-bạn>/LazyK.git
+   git clone https://github.com/Maditor/LazyK.git
    ```
 3. Mở thư mục `LazyK`, chạy **`setup.bat`**. Nó sẽ tự tạo môi trường Python riêng và cài thư viện, mất khoảng 1–3 phút.
 4. Chạy **`run.bat`** mỗi khi muốn dùng.
