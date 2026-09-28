@@ -51,13 +51,39 @@ Không cần card đồ hoạ mạnh: mọi xử lý AI đều chạy trên máy
 
 ### Cách 2: Chạy từ mã nguồn
 
-1. Cài **Python 3.11+** từ [python.org](https://www.python.org/downloads/windows/).
-   Khi cài, **tick ô "Add python.exe to PATH"**; các mục khác để mặc định (cần có *tcl/tk* và *py launcher*).
-2. Tải mã nguồn: bấm **Code → Download ZIP** rồi giải nén, hoặc:
+1. Cài **Python 3.11+** bằng **một trong hai cách**:
+
+   **a) Bằng lệnh (nhanh nhất).** Mở **Command Prompt** (bấm `Win`, gõ `cmd`, Enter) rồi dán lệnh:
    ```bat
-   git clone https://github.com/Maditor/LazyK.git
+   winget install -e --id Python.Python.3.11 --override "/passive PrependPath=1 Include_launcher=1 Include_tcltk=1"
    ```
-3. Mở thư mục `LazyK`, chạy **`setup.bat`**. Nó sẽ tự tạo môi trường Python riêng và cài thư viện, mất khoảng 1–3 phút.
+   Lệnh này tải và cài Python 3.11, **tự thêm vào PATH**, kèm *py launcher* và *tcl/tk* mà LazyK cần. Nếu Windows hỏi quyền, bấm **Yes**.
+
+   > Máy báo `'winget' is not recognized`? Cài **App Installer** từ Microsoft Store (Windows 10 bản cũ), hoặc dùng cách b.
+
+   **b) Bằng trình cài đặt.** Tải từ [python.org](https://www.python.org/downloads/windows/), mở file cài, **tick ô "Add python.exe to PATH"** rồi bấm *Install Now* (các mục khác để mặc định).
+
+   **Kiểm tra:** **đóng CMD cũ, mở CMD mới** rồi gõ:
+   ```bat
+   py --version
+   ```
+   Hiện `Python 3.11.x` (hoặc mới hơn) là được.
+
+   > Nếu gõ `python` mà Microsoft Store tự mở ra: vào *Settings → Apps → Advanced app settings → App execution aliases*, tắt hai mục *python.exe* và *python3.exe*.
+
+2. Tải mã nguồn, chọn một trong hai cách:
+   - Bấm nút **Code → Download ZIP** trên trang GitHub rồi giải nén.
+   - Hoặc dùng Git (cài Git bằng `winget install -e --id Git.Git` nếu chưa có), mở CMD mới rồi gõ:
+     ```bat
+     cd /d %USERPROFILE%\Desktop
+     git clone https://github.com/Maditor/LazyK.git
+     ```
+3. Mở thư mục `LazyK`, chạy **`setup.bat`** (bấm đúp). Nó tự tạo môi trường Python riêng và cài thư viện, mất khoảng 1–3 phút.
+   Muốn chạy bằng lệnh thì:
+   ```bat
+   cd /d %USERPROFILE%\Desktop\LazyK
+   setup.bat
+   ```
 4. Chạy **`run.bat`** mỗi khi muốn dùng.
 
 ## 🔑 Lấy API key
@@ -170,7 +196,9 @@ Tài khoản miễn phí có giới hạn số lượt theo phút / ngày. Bật
 <details>
 <summary><b>setup.bat báo lỗi không tìm thấy Python</b></summary>
 
-Cài lại Python từ python.org và nhớ tick **"Add python.exe to PATH"**, sau đó mở lại `setup.bat`.
+- Mở CMD **mới** và gõ `py --version`. Nếu báo lỗi, cài lại Python theo mục *Cài đặt → Cách 2* (lệnh `winget` đã tự thêm PATH).
+- Nếu cài bằng file từ python.org, nhớ tick **"Add python.exe to PATH"**.
+- Sau khi cài xong, đóng mọi cửa sổ CMD rồi chạy lại `setup.bat`.
 </details>
 
 <details>
