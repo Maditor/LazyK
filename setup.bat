@@ -2,12 +2,37 @@
 setlocal
 cd /d "%~dp0"
 echo === LazyK setup ===
-where py >nul 2>nul && (py -3.11 -m venv .venv) || (python -m venv .venv)
-if errorlevel 1 (echo Could not create venv. Install Python 3.11 first. & pause & exit /b 1)
-call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+
+rem A .venv copied or moved from another folder still points to the old path -> rebuild it.
+set "HERE=%~dp0"
+set "MARK=.venv\lazyk_path.txt"
+if exist .venv (
+    set "OLD="
+    if exist "%MARK%" set /p OLD=<"%MARK%"
+    call :check_venv
+)
+
+if not exist .venv\Scripts\python.exe (
+    echo Creating .venv ...
+    where py >nul 2>nul && (py -3.11 -m venv .venv) || (python -m venv .venv)
+    if not exist .venv\Scripts\python.exe (echo Could not create venv. Install Python 3.11 first. & pause & exit /b 1)
+)
+> "%MARK%" echo %HERE%
+
+set "PY=.venv\Scripts\python.exe"
+"%PY%" -m pip install --upgrade pip
+"%PY%" -m pip install -r requirements.txt
 if errorlevel 1 (echo Install failed. & pause & exit /b 1)
 echo.
 echo Done. Start with run.bat
 pause
+exit /b 0
+
+:check_venv
+if /i not "%OLD%"=="%HERE%" goto :rebuild
+.venv\Scripts\python.exe -c "import sys" >nul 2>nul || goto :rebuild
+exit /b 0
+:rebuild
+echo Old .venv belongs to another folder or is broken - recreating it...
+rmdir /s /q .venv
+exit /b 0

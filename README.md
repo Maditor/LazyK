@@ -202,6 +202,18 @@ Tài khoản miễn phí có giới hạn số lượt theo phút / ngày. Bật
 </details>
 
 <details>
+<summary><b>setup.bat báo "Fatal error in launcher: Unable to create process"</b></summary>
+
+Thư mục `.venv` được chép hoặc di chuyển từ chỗ khác sang, nên vẫn trỏ về đường dẫn cũ. Bản `setup.bat` mới tự phát hiện và tạo lại `.venv`. Nếu vẫn lỗi, xoá thư mục `.venv` rồi chạy lại:
+
+```bat
+rmdir /s /q .venv
+setup.bat
+```
+Đừng chép `.venv` sang máy hoặc thư mục khác. Mỗi nơi chỉ cần chạy `setup.bat` một lần.
+</details>
+
+<details>
 <summary><b>Xem log ở đâu?</b></summary>
 
 `logs\lazyk.log` trong thư mục của LazyK.
@@ -209,7 +221,16 @@ Tài khoản miễn phí có giới hạn số lượt theo phút / ngày. Bật
 
 ## 📦 Tự đóng gói file `.exe`
 
-Sau khi chạy `setup.bat`, chạy **`build_exe.bat`**. Kết quả nằm ở `dist\LazyK\`. Nén cả thư mục này để chia sẻ; người nhận chỉ cần giải nén và mở `LazyK.exe`, không cần cài Python.
+Sau khi chạy `setup.bat`, chạy **`build_exe.bat`**. Kết quả nằm ở `dist\LazyK\` (script tự mở thư mục này). ⚠️ Chỉ chạy `LazyK.exe` trong `dist`, **không** chạy file trong thư mục `build` (đó chỉ là file nháp của PyInstaller, sẽ báo *Failed to load Python DLL*). Đừng tách `LazyK.exe` ra khỏi thư mục `_internal` đi kèm. Nén cả thư mục này để chia sẻ; người nhận chỉ cần giải nén và mở `LazyK.exe`, không cần cài Python.
+
+### Tạo file cài đặt (Setup.exe)
+
+Sau khi `build_exe.bat` chạy xong, chạy **`build_installer.bat`**. Nếu máy chưa có Inno Setup, script sẽ tự cài bằng `winget`. Muốn ghi số phiên bản thì thêm vào sau lệnh, ví dụ `build_installer.bat 1.2.0`.
+
+Kết quả là một file duy nhất `Output\LazyK-Setup-<phiên bản>.exe`. Người nhận chỉ cần chạy file này:
+- Không cần quyền Administrator, không cần Python: mọi thư viện đã nằm sẵn trong bản build.
+- LazyK được cài vào `%LOCALAPPDATA%\Programs\LazyK`, có lối tắt ở Start Menu (và ngoài Desktop nếu chọn).
+- Gỡ bằng *Settings → Apps* như ứng dụng bình thường. Khi gỡ, `settings.json` (chứa API key) và thư mục log cũng bị xoá.
 
 ## 🔐 Quyền riêng tư
 
