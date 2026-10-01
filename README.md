@@ -24,6 +24,7 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 - **Tẩy bóng thoại theo đúng hình**; bóng thoại đen hoặc xám vẫn giữ màu gốc.
 - Chữ dịch được **xếp vừa bóng thoại**, dòng giữa dài, dòng trên dưới ngắn, không có dòng một chữ.
 - **Tự đổi model hoặc server khi bị báo bận / hết lượt** (Gemini ↔ Cloudflare).
+- **3 chế độ**: AI đọc và dịch · Local OCR + AI dịch · Local OCR + **Google Translate** (miễn phí hoàn toàn, không cần API key).
 - Trang đã dịch được **nhớ lại**: cuộn quay lại là hiện ngay, không tốn lượt API.
 - **Thanh công cụ nhỏ luôn nổi trên cùng**, chọn được font chữ có sẵn trong Windows.
 - Lớp dịch **hiện được trong ảnh chụp màn hình** (Print Screen, Snipping Tool).
@@ -37,7 +38,7 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 | API key | Google Gemini (**miễn phí**) và/hoặc Cloudflare Workers AI |
 | Mạng | Cần có để cài thư viện và gọi AI |
 
-Không cần card đồ hoạ mạnh: mọi xử lý AI đều chạy trên máy chủ của Google / Cloudflare.
+Không cần card đồ hoạ mạnh: mặc định mọi xử lý AI đều chạy trên máy chủ của Google / Cloudflare. Nếu bật **Local OCR**, việc đọc chữ chạy trên máy bạn (CPU, hoặc card đồ hoạ qua DirectML nếu có).
 
 ## 🚀 Cài đặt
 
@@ -124,7 +125,7 @@ Chấm tròn trên thanh công cụ cho biết LazyK đang làm gì:
 | Nút | Chức năng |
 |---|---|
 | `⋮⋮` / logo | Kéo để di chuyển thanh (vị trí được nhớ lại) |
-| **Gemini · …▾** | Chọn server AI và model; bật/tắt tự đổi model / server |
+| **Gemini · …▾** | Chọn server AI và model; bật/tắt tự đổi model / server. Cột *Mode* chọn ai đọc và ai dịch (nút hiện **Gemini · …**, **Local + Gemini** hoặc **Local + Google**) |
 | **↻** | Dịch ngay trang đang xem |
 | **❚❚** | Tạm dừng / chạy lại |
 | **👁** | Ẩn / hiện bản dịch |
@@ -158,6 +159,36 @@ Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấ
 
 ### Kéo khung chọn vùng (⛶)
 Hữu ích khi trang đọc truyện có menu, bình luận hoặc nền rối bên cạnh. Bấm **⛶**, màn hình tối lại, **kéo một khung ôm sát trang truyện** rồi thả chuột. Từ đó LazyK chỉ đọc trong khung này, kể cả sau khi mở lại. Muốn bỏ khung: ⚙ → *Capture* → *Browser page*.
+
+### Chọn chế độ: ai đọc chữ, ai dịch
+
+Bấm nút server trên thanh công cụ, cột **Mode** có 3 lựa chọn:
+
+| Chế độ | Đọc chữ | Dịch | Khi nào dùng |
+|---|---|---|---|
+| **AI · reads and translates** (mặc định) | Gemini / Cloudflare | Gemini / Cloudflare | Dịch hay nhất, hiểu mạch truyện, bỏ qua tiếng động (SFX) |
+| **Local OCR + AI translation** | Máy bạn | Gemini / Cloudflare | Vẫn dịch hay, đỡ tốn lượt AI nhiều vì AI chỉ nhận chữ |
+| **Local OCR + Google Translate** | Máy bạn | Google Translate | Nhanh nhất, **không cần API key**, không lo hết lượt; bản dịch kém tự nhiên hơn |
+
+- Ở chế độ Google: nếu Google tạm chặn (lỗi 429) và bạn có nhập key AI, trang đó được AI dịch thay. Bấm **Test Google Translate** trong menu để kiểm tra.
+- Google dịch từng bóng thoại riêng, không biết mạch truyện, nên xưng hô và câu kéo qua nhiều bóng sẽ kém hơn AI.
+
+### Local OCR (đọc chữ ngay trên máy)
+
+Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
+
+| Model | Dung lượng | Dùng cho |
+|---|---|---|
+| PP-OCRv6 (PaddleOCR) | có sẵn | Tiếng Nhật (cả chữ dọc), Trung, Anh |
+| PP-OCRv5 Korean | 13 MB | Tiếng Hàn (manhwa, webtoon): **cần tải** |
+| manga-ocr | 460 MB | Tuỳ chọn: đọc chữ vẽ tay trong manga Nhật chính xác hơn, chậm hơn |
+
+- Model tải về được lưu ở `%LOCALAPPDATA%\LazyK\models`, build lại hay cài lại LazyK vẫn còn.
+- **Use the graphics card**: chạy trên card đồ hoạ qua DirectML (NVIDIA, AMD, Intel đều được). Không có thì tự chạy bằng CPU.
+- **Source language = Any**: LazyK thử model đã đúng ở trang trước; nếu đọc không chắc thì thử thêm model kia (Nhật/Trung/Anh ↔ Hàn). Đọc truyện Hàn thì nên tải model Korean; chọn hẳn *Source language* sẽ nhanh hơn.
+- Trang đầu tiên chậm hơn vài giây vì phải nạp model; các trang sau nhanh.
+- Tốc độ tham khảo (trang khoảng 10 bóng thoại): CPU khoảng 1–3 giây cho PP-OCR, thêm 0,2–0,5 giây mỗi bóng nếu dùng manga-ocr; card đồ hoạ nhanh hơn nhiều. Phần dịch bằng AI tính riêng.
+- Local OCR không phân biệt được tiếng động (SFX) với lời thoại như AI, nên chữ SFX vẽ to có thể cũng được dịch.
 
 ## 💡 Mẹo để dịch đẹp hơn
 
@@ -221,7 +252,15 @@ setup.bat
 
 ## 📦 Tự đóng gói file `.exe`
 
-Sau khi chạy `setup.bat`, chạy **`build_exe.bat`**. Kết quả nằm ở `dist\LazyK\` (script tự mở thư mục này). ⚠️ Chỉ chạy `LazyK.exe` trong `dist`, **không** chạy file trong thư mục `build` (đó chỉ là file nháp của PyInstaller, sẽ báo *Failed to load Python DLL*). Đừng tách `LazyK.exe` ra khỏi thư mục `_internal` đi kèm. Nén cả thư mục này để chia sẻ; người nhận chỉ cần giải nén và mở `LazyK.exe`, không cần cài Python.
+Sau khi chạy `setup.bat`, chạy **`build_exe.bat`**. Script làm 4 bước:
+1. Tự tắt LazyK nếu đang chạy (để file cũ không bị khoá), rồi cài PyInstaller.
+2. Đóng gói vào `dist\LazyK\`.
+3. Giữ lại `settings.json` của bản build trước (API key, vị trí thanh công cụ…). Nếu chưa có bản build trước thì chép `settings.json` từ thư mục mã nguồn.
+4. Tạo lối tắt **LazyK** ngoài Desktop.
+
+⚠️ Chỉ chạy `LazyK.exe` trong `dist\LazyK`, **không** chạy file trong thư mục `build` (đó chỉ là file nháp, sẽ báo *Failed to load Python DLL*; script tự xoá nó). Đừng tách `LazyK.exe` ra khỏi thư mục `_internal` đi kèm.
+
+🔒 `dist\LazyK` có `settings.json` chứa API key của bạn, nên **đừng nén nguyên thư mục này gửi người khác**. Để chia sẻ, dùng `build_installer.bat` bên dưới: file cài đặt tự bỏ `settings.json` và thư mục log ra.
 
 ### Tạo file cài đặt (Setup.exe)
 

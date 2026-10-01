@@ -63,7 +63,10 @@ class App:
         self.watcher.start()
         self.root.after(30, self._poll)
         self.toolbar.show()
-        if not self.s.has_credentials() and not self.demo:
+        if self.s["ocr_engine"] == "local" and not self.demo:
+            from . import local_ocr
+            local_ocr.ENGINE.warm(self.s)  # load the OCR models while the user opens a page
+        if self.s.needs_ai() and not self.s.has_credentials() and not self.demo:
             self._ask_credentials()
         else:
             self._status("ready", "Ready", auto_hide=2000)
@@ -133,6 +136,10 @@ class App:
             if gen == self.gen:
                 self._status(state, text)
             self.toolbar.refresh()  # model / server may have been switched automatically
+        elif kind == "toast":
+            _, state, text, ms = ev
+            if not self.busy:
+                self._status(state, text, auto_hide=ms)
         elif kind == "done":
             _, gen, rect, dpi, items, cached = ev
             if gen != self.gen:
@@ -141,12 +148,19 @@ class App:
             log.info("Job %d done: %d items%s", gen, len(items), " (cached)" if cached else "")
             self.busy = False
             if not items:
-                self._status("info", "No text found", auto_hide=2500)
+                from . import local_ocr
+                hint = local_ocr.ENGINE.hint if self.s["ocr_engine"] == "local" else ""
+                self._status("error" if hint else "info", hint or "No text found", auto_hide=6000 if hint else 2500)
                 return
             self.overlay.show_items(rect, items, dpi)
             self.toolbar.raise_()
             self.last = (rect, items, dpi)
             n = sum(1 for it in items if it.get("translation"))
+            if self.s["ocr_engine"] == "local" and not cached:
+                from . import local_ocr
+                if local_ocr.ENGINE.hint:  # e.g. a Korean page without the Korean model
+                    self._status("error", local_ocr.ENGINE.hint, auto_hide=6000)
+                    return
             self._status("ready", f"Ready · {n} bubble" + ("s" if n != 1 else "") + (" (cached)" if cached else ""), auto_hide=2000)
         elif kind == "error":
             _, gen, msg = ev
@@ -224,6 +238,41 @@ class App:
         self.s.update(server=srv)
         self.toolbar.refresh()
         self._status("info", SERVER_NAMES[srv] + " · " + short_model(self.s[f"{srv}_model"]), auto_hide=1800)
+
+    MODE_NAMES = {"ai": "AI reads & translates", "local_ai": "Local OCR + AI translation",
+                  "local_google": "Local OCR + Google Translate"}
+
+    def set_read_mode(self, mode):
+        """ai | local_ai | local_google (see Settings.read_mode)."""
+        if mode == "ai":
+            self.s.update(ocr_engine="ai")
+        else:
+            self.s.update(ocr_engine="local", translator="google" if mode == "local_google" else "ai")
+        self.toolbar.refresh()
+        if mode != "ai":
+            from . import local_ocr
+            local_ocr.ENGINE.warm(self.s)
+        self._status("info", self.MODE_NAMES[mode], auto_hide=1800)
+        if self.s.needs_ai() and not self.s.has_credentials():
+            self._ask_credentials()
+
+    def test_google(self):
+        from . import gtranslate
+        self._status("translating", "Testing Google…")
+
+        def run():
+            ok, msg, secs = gtranslate.test(self.s)
+            self.q.put(("toast", "ready" if ok else "error",
+                        f"Google OK · {secs:.1f}s" if ok else f"Google: {msg}", 3000 if ok else 8000))
+        threading.Thread(target=run, daemon=True).start()
+
+    def on_local_changed(self):
+        self.pipeline.clear_cache()  # pages read before a model download may have been read badly
+        self.toolbar.refresh()
+        if self.s["ocr_engine"] == "local":
+            from . import local_ocr
+            local_ocr.ENGINE.reset()
+            local_ocr.ENGINE.warm(self.s)
 
     def set_model(self, model):
         self.s.update(**{f"{self.s['server']}_model": model})
@@ -393,7 +442,7 @@ class App:
             self._status("paused", "Paused · press " + self.s["hotkey_pause"].upper() + " to resume",
                          auto_hide=2500)
             return
-        if not self.s.has_credentials() and not self.demo:
+        if self.s.needs_ai() and not self.s.has_credentials() and not self.demo:
             if not auto:
                 self._ask_credentials(then=self.translate)
             return

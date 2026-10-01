@@ -39,7 +39,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\dist\LazyK\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; settings.json (your API keys) and logs stay out of the installer
+Source: "..\dist\LazyK\*"; DestDir: "{app}"; Excludes: "settings.json*,\logs\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\LazyK.exe"

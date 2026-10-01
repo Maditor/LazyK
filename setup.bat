@@ -23,6 +23,9 @@ set "PY=.venv\Scripts\python.exe"
 "%PY%" -m pip install --upgrade pip
 "%PY%" -m pip install -r requirements.txt
 if errorlevel 1 (echo Install failed. & pause & exit /b 1)
+rem Local OCR engine (PaddleOCR models, PP-OCRv6 built in)
+"%PY%" -m pip install --no-deps rapidocr==3.9.2
+if errorlevel 1 (echo Install failed. & pause & exit /b 1)
 echo.
 echo Done. Start with run.bat
 pause

@@ -8,9 +8,10 @@ from collections import OrderedDict
 
 from PIL import Image, ImageDraw
 
+from . import gtranslate
 from .api import make_client
 from .config import app_dir
-from .ocr import run_ocr
+from .ocr import run_local_ocr, run_ocr
 from .translate import translate_lines
 
 log = logging.getLogger(__name__)
@@ -52,13 +53,14 @@ class Pipeline:
         self.settings = settings
         self.cache = OrderedDict()
         self.prev_lines = []  # source lines of the last page, used as translation context
+        self.last_engine = "ai"
 
     def clear_cache(self):
         self.cache.clear()
 
     def _cache_key(self, img_key):
         s = self.settings
-        return f"{img_key}|{s['source_lang']}|{s['target_lang']}|{s['layout']}|{int(s['skip_sfx'])}|{s['box_format']}|v5|{int(s['manga_tiles'])}"
+        return f"{img_key}|{s['source_lang']}|{s['target_lang']}|{s['layout']}|{int(s['skip_sfx'])}|{s['box_format']}|v5|{int(s['manga_tiles'])}|{s['ocr_engine']}|{s['translator'] if s['ocr_engine'] == 'local' else 'ai'}"
 
     def process(self, img, cancel, on_status, scale=1.0):
         """Return list of items {text, type, box, translation}. Raises Cancelled / errors."""
@@ -69,18 +71,36 @@ class Pipeline:
             log.info("Cache hit")
             return self.cache[key], True
 
-        client = make_client(s, on_status=lambda m: on_status("info", m))
+        mode = s.read_mode()
+        client = make_client(s, on_status=lambda m: on_status("info", m)) if s.needs_ai() or s.has_credentials() else None
         debug = [] if s["debug_save"] else None
         t0 = time.time()
         on_status("scanning", "Scanning…")
-        items = run_ocr(client, img, s, cancel, debug, on_status=lambda m: on_status("scanning", m))
+        if s["ocr_engine"] == "local":
+            items = run_local_ocr(img, s, cancel, on_status=lambda m: on_status("scanning", m))
+        else:
+            items = run_ocr(client, img, s, cancel, debug, on_status=lambda m: on_status("scanning", m))
         t1 = time.time()
         log.info("OCR: %d items in %.1fs", len(items), t1 - t0)
         if items:
             on_status("translating", "Translating…")
             src = [it["text"] for it in items]
             budgets = [char_budget(it, s, scale) for it in items]
-            out = translate_lines(client, src, s, cancel, self.prev_lines[-12:], budgets)
+            if mode == "local_google":
+                try:
+                    out = gtranslate.translate(src, s["source_lang"], s["target_lang"], cancel)
+                    self.last_engine = "google"
+                except gtranslate.TranslateError as e:
+                    if client is None:
+                        raise
+                    # Google blocked for a moment: the AI translates this page if a key is set
+                    log.warning("%s -> translating with the AI", e)
+                    on_status("translating", "Google busy · AI translating…")
+                    out = translate_lines(client, src, s, cancel, self.prev_lines[-12:], budgets)
+                    self.last_engine = "ai"
+            else:
+                out = translate_lines(client, src, s, cancel, self.prev_lines[-12:], budgets)
+                self.last_engine = "ai"
             for it, tr in zip(items, out):
                 it["translation"] = tr
             self.prev_lines = src

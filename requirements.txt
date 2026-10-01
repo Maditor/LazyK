@@ -1,6 +1,18 @@
 mss>=9.0
 Pillow>=10.0
-numpy>=1.26
+numpy>=1.26,<3
 requests>=2.31
 pynput>=1.7.6
 opencv-python-headless>=4.8
+# Local OCR. rapidocr itself is installed by setup.bat with --no-deps
+# (its own requirement, opencv-python, would clash with opencv-python-headless).
+onnxruntime-directml>=1.18; sys_platform == "win32"
+onnxruntime>=1.18; sys_platform != "win32"
+jaconv>=0.3
+pyclipper>=1.2
+shapely>=1.7.1,!=2.0.4
+PyYAML
+omegaconf
+colorlog
+tqdm
+six

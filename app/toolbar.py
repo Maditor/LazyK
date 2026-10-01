@@ -147,7 +147,7 @@ class Toolbar:
         self.lbl_status.pack(side="left")
         self._sep(b)
         self.btn_server = self._button(b, "Gemini · 3.5 Flash Lite ▾", self.open_server_menu,
-                                       "AI server and model", chip=True, keep_focus=True)
+                                       "Mode (who reads and who translates), AI server and model", chip=True, keep_focus=True)
         self.btn_server.pack(side="left", padx=1)
         self._sep(b)
 
@@ -181,7 +181,13 @@ class Toolbar:
     def refresh(self):
         s = self.s
         srv = s["server"]
-        self.btn_server.configure(text=f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}  ▾")
+        mode = s.read_mode()
+        if mode == "local_google":  # this PC reads, Google translates: no AI at all
+            self.btn_server.configure(text="Local + Google  ▾")
+        elif mode == "local_ai":  # this PC reads, the AI only translates
+            self.btn_server.configure(text=f"Local + {SERVER_SHORT.get(srv, srv)}  ▾")
+        else:
+            self.btn_server.configure(text=f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}  ▾")
         region = s["capture_mode"] == "region" and s["region"]
         self.btn_region.configure(fg="#f59e0b" if region else FG)  # amber = capturing your own frame
         self.btn_pause.configure(text=self._glyph("play" if self.app.paused else "pause"))
@@ -311,7 +317,21 @@ class Toolbar:
             self.menu.close()
             return
         s = self.s
-        items = [("header", "Translate with")]
+        from . import local_ocr
+        gpu = local_ocr.gpu_name() if s["local_gpu"] else ""
+        mode = s.read_mode()
+        modes = [("header", "Mode"),
+                 ("item", "AI · reads and translates", mode == "ai", lambda: self.app.set_read_mode("ai"),
+                  SERVER_SHORT.get(s["server"], "")),
+                 ("item", "Local OCR + AI translation", mode == "local_ai",
+                  lambda: self.app.set_read_mode("local_ai"), gpu or "CPU"),
+                 ("item", "Local OCR + Google Translate", mode == "local_google",
+                  lambda: self.app.set_read_mode("local_google"), "no key"),
+                 ("sep",),
+                 ("item", "Local OCR models…", False, self.open_local_dialog, None),
+                 ("item", "Test Google Translate", False, self.app.test_google, None),
+                 ("col",)]
+        items = [("header", "AI server" + (" · only if Google fails" if mode == "local_google" else ""))]
         for srv in ("gemini", "cloudflare"):
             has_key = {"gemini": bool(str(s["gemini_api_key"]).strip()),
                        "cloudflare": bool(str(s["cf_api_token"]).strip() and str(s["cf_account_id"]).strip())}[srv]
@@ -329,7 +349,7 @@ class Toolbar:
                    lambda: self.app.toggle_setting("auto_switch_server"), None),
                   ("sep",),
                   ("item", "API keys & models…", False, self.open_api_dialog, None)]
-        self._popup(items, self.btn_server)
+        self._popup(modes + items, self.btn_server)
 
     def open_settings_menu(self):
         """Settings stay open while you change them; ⚙ again, Esc or a click outside closes."""
@@ -388,6 +408,10 @@ class Toolbar:
     def _menu_closed(self):
         self.menu = None
         self.app.restore_focus()
+
+    def open_local_dialog(self):
+        from .local_dialog import LocalDialog
+        LocalDialog(self.root, self.s, on_changed=self.app.on_local_changed)
 
     def open_api_dialog(self, tab=None):
         ApiDialog(self.root, self.s, on_saved=self.app.on_api_saved, tab=tab)

@@ -20,6 +20,13 @@ winapi.set_dpi_awareness()
 from app.config import Settings, app_dir  # noqa: E402
 
 
+def fix_streams():
+    """A windowed exe has no console: libraries that print (progress bars, warnings) must not crash."""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def setup_logging():
     log_dir = os.path.join(app_dir(), "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -57,12 +64,13 @@ def main():
     ap.add_argument("--image", help="translate one image file and save a preview")
     args = ap.parse_args()
 
+    fix_streams()
     setup_logging()
     settings = Settings()
     logging.info("Start (settings: %s)", settings.path)
 
     if args.image:
-        if not settings.has_credentials():
+        if settings.needs_ai() and not settings.has_credentials():
             sys.exit("Add a Gemini key or Cloudflare token first (run the app and click the gear icon).")
         run_image(args.image, settings)
         return

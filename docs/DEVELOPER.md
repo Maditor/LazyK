@@ -192,3 +192,20 @@ app/controller.py    Tk loop, jobs on worker threads, cancellation
 app/toolbar.py       floating toolbar, tooltips, font picker
 app/preview.py       PIL rendering for --image
 ```
+
+## Local OCR (`app/local_ocr.py`)
+
+`settings.ocr_engine = "local"` replaces the vision-AI scan with on-device OCR; the AI only translates.
+
+* Detector: RapidOCR PP-OCRv6 det small (bundled in the `rapidocr` wheel, pinned to 3.9.2).
+* Recognizers: PP-OCRv6 rec small (bundled; ja / zh / en, vertical text OK), PP-OCRv5 Korean
+  (downloaded, 13 MB), optional manga-ocr ONNX (mayocream/manga-ocr-onnx, 460 MB) that re-reads
+  each Japanese block.
+* `source_lang = auto`: the recognizer that won on the previous page runs first; when its mean score
+  is below 0.85 the other one runs too and the higher total score wins.
+* Lines are grouped into blocks (`_group_lines`) unless a drawn outline runs between them
+  (`_divided`); blocks then go through the same `_finish` as the AI path (bubble snapping,
+  fragment merge, reading order).
+* Downloads live in `%LOCALAPPDATA%\LazyK\models`. onnxruntime-directml gives GPU on any DX12 card.
+* `rapidocr` is installed with `--no-deps` (it requires opencv-python, which clashes with
+  opencv-python-headless); its real dependencies are listed in requirements.txt.

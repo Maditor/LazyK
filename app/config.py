@@ -37,6 +37,11 @@ DEFAULTS = {
     "cloudflare_model": "@cf/google/gemma-4-26b-a4b-it",
     "auto_switch_model": True,      # busy / out of quota -> next model in the list
     "auto_switch_server": True,     # server out of quota / bad key -> the other server
+    # Reading the page (OCR)
+    "ocr_engine": "ai",             # ai (the server above reads the image) | local (this PC reads it)
+    "local_gpu": True,              # local OCR on the graphics card (DirectML) when available
+    "local_manga_ocr": True,        # Japanese: re-read blocks with manga-ocr when it is downloaded
+    "translator": "ai",             # with local OCR: ai (Gemini / Cloudflare) | google (Google Translate, no key)
     # Languages / content
     "source_lang": "auto",          # auto | ja | ko | zh | en
     "target_lang": "Vietnamese",
@@ -126,6 +131,16 @@ class Settings:
         self.data.update(kw)
         self.save()
 
+    def read_mode(self) -> str:
+        """ai: the AI reads and translates | local_ai: this PC reads, AI translates |
+        local_google: this PC reads, Google Translate translates (no API key at all)."""
+        if self["ocr_engine"] != "local":
+            return "ai"
+        return "local_google" if self["translator"] == "google" else "local_ai"
+
+    def needs_ai(self) -> bool:
+        return self.read_mode() != "local_google"
+
     def has_credentials(self) -> bool:
         cf = bool(str(self["cf_account_id"]).strip() and str(self["cf_api_token"]).strip())
         return cf or bool(str(self["gemini_api_key"]).strip())
@@ -136,6 +151,10 @@ class Settings:
             # older versions shrank text below the chosen size; now font_min is the reading size
             self.data["font_min"] = max(int(self.data.get("font_min", 14)), 13)
             self.data["_font_scheme"] = 2
+        if self.data.get("ocr_engine") not in ("ai", "local"):
+            self.data["ocr_engine"] = "ai"
+        if self.data.get("translator") not in ("ai", "google"):
+            self.data["translator"] = "ai"
         if self.data.get("server") not in ("gemini", "cloudflare"):
             self.data["server"] = "gemini"  # the local server option was removed
         if "cf_model" in saved and "cloudflare_model" not in saved:

@@ -106,6 +106,9 @@ class ApiDialog:
         T.FlatButton(foot, "Cancel", self.win.destroy, "secondary", font=f["bold"]).pack(side="right", padx=8)
 
     def _show_tab(self, srv):
+        prev = getattr(self, "tab", None)
+        if prev and prev != srv and hasattr(self, "list_text") and self.list_text.winfo_exists():
+            self._read_list(prev)  # keep an edited model list when switching tabs
         self.tab = srv
         for k, b in self.tab_btns.items():
             on = k == srv
@@ -225,7 +228,7 @@ class ApiDialog:
         threading.Thread(target=run, daemon=True).start()
 
     def _test_done(self, ok, msg, secs):
-        if not self.win.winfo_exists():
+        if not self.win.winfo_exists() or not self.test_lbl.winfo_exists():
             return
         self.test_btn.set_enabled(True)
         self.test_lbl.configure(text=(f"✓ {msg} · {secs:.1f}s" if ok else f"✕ {msg}"), fg=T.OK if ok else T.ERR)

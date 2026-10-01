@@ -521,7 +521,19 @@ def run_ocr(client, img: Image.Image, settings, cancel, debug=None, on_status=No
         if box and cut and _inside_other_tile(box, sl, slices, ox, oy):
             dropped += 1  # half a bubble at a tile seam; the neighbouring tile has all of it
             continue
-        it["box"], it["bubble"] = box, None
+        it["box"] = box
+        all_items.append(it)
+    if dropped:
+        log.info("Dropped %d half-bubbles at tile seams", dropped)
+    return _finish(all_items, gray, inv, settings)
+
+
+def _finish(all_items, gray, inv, settings):
+    """Snap boxes to bubbles, filter, join fragments, reading order (shared by AI and local OCR)."""
+    from . import refine
+    for it in all_items:
+        box = it["box"]
+        it["bubble"] = None
         # 3. Snap to the real text strokes / bubble outline
         if box:
             snapped = refine.refine_any(gray, inv, box)
@@ -529,9 +541,6 @@ def run_ocr(client, img: Image.Image, settings, cancel, debug=None, on_status=No
                 it["model_box"] = box
                 it["box"], it["bubble"] = list(snapped[0]), (list(snapped[1]) if snapped[1] else None)
                 it["shape"] = snapped[2]
-        all_items.append(it)
-    if dropped:
-        log.info("Dropped %d half-bubbles at tile seams", dropped)
 
     if settings["skip_sfx"]:
         all_items = [it for it in all_items if it["type"] != "sfx"]
@@ -544,3 +553,22 @@ def run_ocr(client, img: Image.Image, settings, cancel, debug=None, on_status=No
     # 4. One bubble = one item (join column fragments), then reading order
     all_items = merge_fragments(all_items, settings["layout"])
     return sort_reading_order(all_items, settings["layout"])
+
+
+def run_local_ocr(img: Image.Image, settings, cancel, on_status=None):
+    """Same output as run_ocr, read on this PC (local_ocr) instead of by the AI."""
+    from . import local_ocr, refine
+    img = img.convert("RGB")
+    gray = np.asarray(img.convert("L"))
+    inv = 255 - gray
+    crop = refine.trim_borders(gray)
+    ox, oy = (crop[0], crop[1]) if crop else (0, 0)
+    work = img.crop(crop) if crop else img
+    items = local_ocr.ENGINE.read(work, settings, cancel, on_status)
+    if cancel.is_set():
+        raise Cancelled()
+    for it in items:
+        x1, y1, x2, y2 = it["box"]
+        it["box"] = [x1 + ox, y1 + oy, x2 + ox, y2 + oy]
+    log.info("Local OCR: %d blocks", len(items))
+    return _finish(items, gray, inv, settings)
