@@ -73,6 +73,17 @@ class Pipeline:
 
         mode = s.read_mode()
         client = make_client(s, on_status=lambda m: on_status("info", m)) if s.needs_ai() or s.has_credentials() else None
+        if s["layout"] == "vn":
+            from . import vn
+            t0 = time.time()
+            on_status("scanning", "Scanning…")
+            items = vn.run_vn(self, client, img, cancel, on_status)
+            log.info("VN: %d item(s) in %.1fs", len(items), time.time() - t0)
+            if items:  # an empty box is not cached: the same pixels may hold text next time
+                self.cache[key] = items
+                while len(self.cache) > CACHE_SIZE:
+                    self.cache.popitem(last=False)
+            return items, False
         debug = [] if s["debug_save"] else None
         t0 = time.time()
         on_status("scanning", "Scanning…")

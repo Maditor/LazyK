@@ -167,6 +167,16 @@ def make_overlay_window(hwnd, exclude_from_capture: bool = True):
         pass
 
 
+def cursor_pos():
+    """Mouse position in physical screen px, or None."""
+    if not IS_WIN:
+        return None
+    pt = wintypes.POINT()
+    if user32.GetCursorPos(ctypes.byref(pt)):
+        return pt.x, pt.y
+    return None
+
+
 def window_from_point(x, y):
     """Top-level window under a screen point (physical px)."""
     if not IS_WIN:

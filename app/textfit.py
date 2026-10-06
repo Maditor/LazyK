@@ -274,7 +274,10 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                         "size": size, "lines": lines, "fill": fill, "ink": ink})
             blocked.append(tuple(it["bubble"]))
         else:
-            colors = bubble_colors(shape, settings) if shape else (settings["overlay_bg"], settings["overlay_fg"])
+            if it.get("colors") and settings["vn_game_colors"]:  # visual novel: the game's own box colour
+                colors = tuple(it["colors"])
+            else:
+                colors = bubble_colors(shape, settings) if shape else (settings["overlay_bg"], settings["overlay_fg"])
             rest.append((it, text, colors))
 
     todo = []

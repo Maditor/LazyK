@@ -119,7 +119,13 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `target_lang` | `Vietnamese` | |
 | `layout` | `manga` | `manga` = right→left, `webtoon` = left→right |
 | `skip_sfx` | `true` | Drop sound-effect lettering |
-| `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\`` |
+| `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\``. `hotkey_translate` may also be `mouse3` / `mouse4` / `mouse5` (wheel click / side buttons, optionally with modifiers); set it from ⚙ → Translate key… |
+| `layout` = `vn` | | Visual novel mode: `app/vn.py` (one small read + one translation per line, no tiles / bubbles) |
+| `vn_region` | `null` | Text box frame (physical px), separate from `region` |
+| `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Alt+Shift+V`) |
+| `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |
+| `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; use the text box's own colour for the overlay |
+| `hover_hide` | `true` | Mouse over a translated box hides that box until the mouse leaves |
 | `hide_on_scroll` | `true` | |
 | `show_status_pill` | `false` | Extra status pill near the page (errors always show) |
 | `capture_mode`, `region` | `window`, `null` | Set by the ⛶ button |
@@ -187,7 +193,8 @@ app/translate.py     page translation prompt + numbered-line parsing
 app/textfit.py       bread-shaped line breaking, orphan rules, box layout (pure)
 app/pipeline.py      capture, hash cache, OCR → translate, debug dump
 app/overlay.py       overlay + status pill
-app/hotkeys.py       global hotkeys and scroll watching
+app/hotkeys.py       global hotkeys, mouse buttons and scroll watching
+app/vn.py            visual novel mode: one-line read + translate, text-box change watcher
 app/controller.py    Tk loop, jobs on worker threads, cancellation
 app/toolbar.py       floating toolbar, tooltips, font picker
 app/preview.py       PIL rendering for --image

@@ -45,7 +45,7 @@ DEFAULTS = {
     # Languages / content
     "source_lang": "auto",          # auto | ja | ko | zh | en
     "target_lang": "Vietnamese",
-    "layout": "manga",              # manga (right->left) | webtoon (left->right)
+    "layout": "manga",              # manga (right->left) | webtoon (left->right) | vn (visual novel text box)
     "skip_sfx": True,
     # Trigger mode
     "mode": "auto",                 # auto (translate after scrolling stops) | hotkey
@@ -58,8 +58,17 @@ DEFAULTS = {
     "hotkey_hide": "esc",
     "hotkey_pause": "alt+shift+t",
     "hotkey_region": "alt+shift+r",  # draw a capture frame
+    "hotkey_vn_auto": "alt+shift+v",  # visual novel: auto-scan on / off
     "hotkey_quit": "ctrl+alt+q",    # until the tray icon exists (step 2)
     "hide_on_scroll": True,
+    # Visual novel mode
+    "vn_region": None,              # [x, y, w, h] physical px: the game's text box
+    "vn_auto": False,               # scan by itself when the text in the box changes (own on / off)
+    "vn_poll_ms": 200,              # how often the text box is looked at while auto-scan is on
+    "vn_stable_ms": 350,            # text must stay unchanged this long (typewriter effect) before a scan
+    "vn_change_pct": 0.3,           # % of the box that must change to count as new text (raise it if a big icon blinks)
+    "vn_max_width": 1000,           # image width sent to the AI
+    "vn_game_colors": True,         # paint the translation in the text box's own colour
     # Capture
     "capture_mode": "window",       # window (browser page area) | region (frame drawn by the user)
     "region": None,                 # [x, y, w, h] physical px of the drawn frame
@@ -74,6 +83,7 @@ DEFAULTS = {
     "overlay_fg": "#111111",
     "overlay_outline": "",          # e.g. "#cccccc"; empty = none
     "overlay_shadow": False,
+    "hover_hide": True,             # mouse over a translated box hides that box until the mouse leaves
     "overlay_in_screenshots": True,  # Print Screen / Snipping Tool can capture the translated page
     "font_family": "Segoe UI",
     "font_bold": True,
@@ -151,6 +161,8 @@ class Settings:
             # older versions shrank text below the chosen size; now font_min is the reading size
             self.data["font_min"] = max(int(self.data.get("font_min", 14)), 13)
             self.data["_font_scheme"] = 2
+        if self.data.get("layout") not in ("manga", "webtoon", "vn"):
+            self.data["layout"] = "manga"
         if self.data.get("ocr_engine") not in ("ai", "local"):
             self.data["ocr_engine"] = "ai"
         if self.data.get("translator") not in ("ai", "google"):

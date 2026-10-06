@@ -8,11 +8,12 @@ from . import winapi
 from .api import Cancelled
 from .api import SERVER_NAMES
 from .api_dialog import ApiDialog, short_model
-from .hotkeys import InputWatcher
+from .hotkeys import InputWatcher, pretty
 from .overlay import Overlay, StatusPill
 from .pipeline import Pipeline, grab
 from .region import RegionSelector
 from .toolbar import LANG_CYCLE, Toolbar
+from .vn import VNWatcher
 
 log = logging.getLogger(__name__)
 CAPTURE_DELAY_MS = 120  # the overlay is hidden first so our own capture never reads it back
@@ -53,7 +54,8 @@ class App:
         self.watcher = InputWatcher(
             {"translate": settings["hotkey_translate"], "hide": settings["hotkey_hide"],
              "pause": settings["hotkey_pause"], "quit": settings["hotkey_quit"],
-             "mode": settings["hotkey_mode"], "region": settings["hotkey_region"]},
+             "mode": settings["hotkey_mode"], "region": settings["hotkey_region"],
+             "vn_auto": settings["hotkey_vn_auto"]},
             on_hotkey=lambda name: self.q.put(("hotkey", name)),
             on_scroll=lambda x, y: self.q.put(("scroll", x, y)),
         )
@@ -61,6 +63,8 @@ class App:
     # ------------------------------------------------------------ lifecycle
     def run(self):
         self.watcher.start()
+        self.vn_watcher = VNWatcher(self)  # idle unless Reading order = Visual novel and auto-scan is on
+        self.vn_watcher.start()
         self.root.after(30, self._poll)
         self.toolbar.show()
         if self.s["ocr_engine"] == "local" and not self.demo:
@@ -75,6 +79,8 @@ class App:
     def quit(self):
         self._cancel_job()
         self.watcher.stop()
+        if getattr(self, "vn_watcher", None):
+            self.vn_watcher.stop()
         self.root.quit()
 
     def _ask_credentials(self, then=None):
@@ -94,6 +100,9 @@ class App:
                     log.exception("Event %s failed", ev[0])
         except queue.Empty:
             pass
+        self._hover_tick = getattr(self, "_hover_tick", 0) + 1
+        if self._hover_tick % 2 == 0:  # ~60 ms
+            self._update_hover()
         if self.overlay.visible != self._overlay_vis:
             self._overlay_vis = self.overlay.visible
             self.toolbar.refresh()
@@ -103,6 +112,14 @@ class App:
             if fg and not winapi.is_own_window(fg):
                 self.target_hwnd = winapi.root_window(fg)
         self.root.after(30, self._poll)
+
+    def _update_hover(self):
+        """Hide the translated box under the mouse so the original art / text below can be checked."""
+        if not (self.s["hover_hide"] and self.overlay.visible):
+            self.overlay.set_hover(None)
+            return
+        pos = winapi.cursor_pos()
+        self.overlay.set_hover(pos)
 
     def restore_focus(self):
         """After a toolbar click, give the keyboard back to the browser."""
@@ -129,6 +146,16 @@ class App:
                 self.toggle_mode()
             elif name == "region":
                 self.select_region()
+            elif name == "vn_auto":
+                self.toggle_vn_auto()
+        elif kind == "vn_hide":
+            if self.s["layout"] == "vn" and (self.overlay.visible or self.busy):
+                self._cancel_job()
+                self.overlay.clear()
+                self.status.hide()
+        elif kind == "vn_scan":
+            if self.s["layout"] == "vn" and self.s["vn_auto"] and not self.paused:
+                self.translate(auto=True)
         elif kind == "scroll":
             self._on_scroll(ev[1], ev[2])
         elif kind == "status":
@@ -148,6 +175,9 @@ class App:
             log.info("Job %d done: %d items%s", gen, len(items), " (cached)" if cached else "")
             self.busy = False
             if not items:
+                if self.s["layout"] == "vn" and self.s["vn_auto"]:
+                    self.toolbar.refresh()  # an empty text box between lines is normal: no message
+                    return
                 from . import local_ocr
                 hint = local_ocr.ENGINE.hint if self.s["ocr_engine"] == "local" else ""
                 self._status("error" if hint else "info", hint or "No text found", auto_hide=6000 if hint else 2500)
@@ -195,9 +225,15 @@ class App:
             self.toolbar.set_status("idle", "", hold_ms=1)  # drop "Scanning…"
 
     # ------------------------------------------------------------ capture region
+    def _region_key(self):
+        return "vn_region" if self.s["layout"] == "vn" else "region"
+
     def _region(self):
-        r = self.s["region"]
-        if self.s["capture_mode"] == "region" and isinstance(r, (list, tuple)) and len(r) == 4:
+        """The frame to capture, or None for 'the browser page'. Visual novel: always the text box frame."""
+        if self.s["layout"] != "vn" and self.s["capture_mode"] != "region":
+            return None
+        r = self.s[self._region_key()]
+        if isinstance(r, (list, tuple)) and len(r) == 4:
             return tuple(int(v) for v in r)
         return None
 
@@ -209,12 +245,15 @@ class App:
         self._cancel_auto_timer()
         self.overlay.clear()
         self.status.hide()
-        RegionSelector(self.root, self._region_done, current=self.s["region"])
+        RegionSelector(self.root, self._region_done, current=self.s[self._region_key()])
 
     def _region_done(self, rect):
         self.selecting = False
         if rect:
-            self.s.update(region=list(rect), capture_mode="region")
+            if self._region_key() == "vn_region":
+                self.s.update(vn_region=list(rect))
+            else:
+                self.s.update(region=list(rect), capture_mode="region")
             self.pipeline.prev_lines = []
             log.info("Capture region set to %s", rect)
             self.toolbar.refresh()
@@ -283,9 +322,30 @@ class App:
         if self.s["mode"] != mode:
             self.toggle_mode()
 
+    LAYOUT_NAMES = {"manga": "Manga (right→left)", "webtoon": "Webtoon (left→right)",
+                    "vn": "Visual novel (text box)"}
+
     def set_layout(self, layout):
-        if self.s["layout"] != layout:
-            self.toggle_layout()
+        if self.s["layout"] == layout:
+            return
+        self._cancel_job()
+        self._cancel_auto_timer()
+        self.overlay.clear()
+        self.pipeline.prev_lines = []
+        self.s.update(layout=layout)
+        self.toolbar.refresh()
+        self._status("info", "Reading order: " + self.LAYOUT_NAMES[layout], auto_hide=2000)
+        if layout == "vn" and not self._region():
+            self.root.after(300, self.select_region)  # first time: draw a frame around the text box
+
+    def toggle_vn_auto(self):
+        self.s.update(vn_auto=not self.s["vn_auto"])
+        if self.s["layout"] != "vn":
+            self.set_layout("vn")
+        self.toolbar.refresh()
+        on = self.s["vn_auto"]
+        self._status("info", "VN auto-scan " + ("ON" if on else "OFF"), auto_hide=1500)
+        self.rerender()  # the overlay is (not) excluded from screen captures while auto-scan is on
 
     def set_source_lang(self, code):
         names = {"auto": "Auto detect", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "en": "English"}
@@ -367,7 +427,68 @@ class App:
     def _mode_text(self):
         if self.s["mode"] == "auto":
             return "Auto: translates when you stop scrolling"
-        return f"Hotkey: {self.s['hotkey_translate'].upper()} to translate"
+        return f"Hotkey: {pretty(self.s['hotkey_translate'])} to translate"
+
+    # ------------------------------------------------------------ translate key
+    HOTKEY_KEYS = ("hotkey_translate", "hotkey_hide", "hotkey_pause", "hotkey_quit", "hotkey_mode",
+                   "hotkey_region", "hotkey_vn_auto")
+
+    def _bindings(self):
+        return {"translate": self.s["hotkey_translate"], "hide": self.s["hotkey_hide"],
+                "pause": self.s["hotkey_pause"], "quit": self.s["hotkey_quit"],
+                "mode": self.s["hotkey_mode"], "region": self.s["hotkey_region"],
+                "vn_auto": self.s["hotkey_vn_auto"]}
+
+    def open_key_dialog(self, setting="hotkey_translate", title="Translate key", anchor=None):
+        from .config import DEFAULTS
+        from .key_dialog import KeyDialog
+        if getattr(self, "_key_win", None) and self._key_win.win.winfo_exists():
+            self._key_win.win.lift()
+            return
+        self._key_win = KeyDialog(self.root, self.watcher, self.s[setting], DEFAULTS[setting],
+                                  lambda spec: self.set_hotkey(setting, spec, title), anchor, title)
+
+    def set_hotkey(self, setting, spec, title="Key"):
+        spec = str(spec).lower()
+        for k in self.HOTKEY_KEYS:
+            if k != setting and str(self.s[k]).lower() == spec:
+                self._status("error", f"{pretty(spec)} is already used by another action", auto_hide=4000)
+                return
+        self.s.update(**{setting: spec})
+        self.watcher.set_bindings(self._bindings())
+        self.toolbar.refresh()
+        self._status("info", f"{title}: {pretty(spec)}", auto_hide=2500)
+        self.restore_focus()
+
+    def set_translate_key(self, spec):
+        self.set_hotkey("hotkey_translate", spec, "Translate key")
+
+    def toggle_vn_colors(self):
+        self.s.update(vn_game_colors=not self.s["vn_game_colors"])
+        self.rerender()
+        self.toolbar.refresh()
+
+    # ------------------------------------------------------------ overlay colours
+    def pick_overlay_color(self, key, title):
+        """key: overlay_bg | overlay_fg. Windows colour dialog; applied live on the visible overlay."""
+        from tkinter import colorchooser
+        _rgb, hexa = colorchooser.askcolor(color=self.s[key], title=title, parent=self.root)
+        if hexa:
+            self.s.update(**{key: hexa.lower()})
+            self.rerender()
+            self.toolbar.refresh()
+        self.restore_focus()
+
+    def reset_overlay_colors(self):
+        from .config import DEFAULTS
+        self.s.update(overlay_bg=DEFAULTS["overlay_bg"], overlay_fg=DEFAULTS["overlay_fg"])
+        self.rerender()
+        self.toolbar.refresh()
+
+    def toggle_hover_hide(self):
+        self.s.update(hover_hide=not self.s["hover_hide"])
+        if not self.s["hover_hide"]:
+            self.overlay.set_hover(None)
 
     def toggle_mode(self):
         self.s.update(mode="hotkey" if self.s["mode"] == "auto" else "auto")
@@ -388,8 +509,8 @@ class App:
 
     def _on_scroll(self, x, y):
         """Wheel (x, y = cursor) or navigation key (x, y = None)."""
-        if self.paused or self.selecting:
-            return
+        if self.paused or self.selecting or self.s["layout"] == "vn":
+            return  # visual novels use the wheel / Space to advance: the scroll trigger is for manga
         if x is None and winapi.is_own_window(winapi.foreground_window()):
             return  # typing in the font picker / dialog
         region = self._region()
@@ -439,7 +560,7 @@ class App:
         if self.paused:
             if auto:
                 return
-            self._status("paused", "Paused · press " + self.s["hotkey_pause"].upper() + " to resume",
+            self._status("paused", "Paused · press " + pretty(self.s["hotkey_pause"]) + " to resume",
                          auto_hide=2500)
             return
         if self.s.needs_ai() and not self.s.has_credentials() and not self.demo:
@@ -447,6 +568,10 @@ class App:
                 self._ask_credentials(then=self.translate)
             return
         region = self._region()
+        if self.s["layout"] == "vn" and not region:
+            if not auto:
+                self.select_region()  # draw the frame around the text box first
+            return
         if region:
             rect = region
             dpi = winapi.dpi_for_point(rect[0] + rect[2] / 2, rect[1] + rect[3] / 2)
@@ -479,7 +604,8 @@ class App:
             self.q.put(("done", gen, rect, dpi, demo_items(rect), False))
             return
         self._status("scanning", "Scanning…")
-        self.root.after(CAPTURE_DELAY_MS, lambda: threading.Thread(
+        delay = 15 if (self.s["layout"] == "vn" and self.s["vn_auto"]) else CAPTURE_DELAY_MS
+        self.root.after(delay, lambda: threading.Thread(
             target=self._work, args=(gen, rect, dpi, cancel), daemon=True).start())
 
     def _work(self, gen, rect, dpi, cancel):

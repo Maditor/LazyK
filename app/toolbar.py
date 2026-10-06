@@ -6,6 +6,7 @@ import tkinter.font as tkfont
 from . import theme, winapi
 from .api import SERVER_NAMES, SERVER_SHORT
 from .api_dialog import ApiDialog, short_model
+from .hotkeys import pretty
 from .overlay import _ClickThroughWindow, rounded_rect
 from .popup import PopupMenu
 
@@ -188,8 +189,9 @@ class Toolbar:
             self.btn_server.configure(text=f"Local + {SERVER_SHORT.get(srv, srv)}  ▾")
         else:
             self.btn_server.configure(text=f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}  ▾")
-        region = s["capture_mode"] == "region" and s["region"]
+        region = bool(self.app._region())
         self.btn_region.configure(fg="#f59e0b" if region else FG)  # amber = capturing your own frame
+        self.btn_translate.tip_text = f"Translate now ({pretty(s['hotkey_translate'])})"
         self.btn_pause.configure(text=self._glyph("play" if self.app.paused else "pause"))
         self.btn_overlay.configure(text=self._glyph("eye" if self.app.overlay.visible else "eye_off"))
         if not self._status_job and not self.app.busy:
@@ -198,6 +200,9 @@ class Toolbar:
     def _set_idle(self):
         if self.app.paused:
             self._show_state("paused", "Paused")
+        elif self.s["layout"] == "vn":
+            auto = bool(self.s["vn_auto"])
+            self._show_state("idle" if auto else "hotkey", "VN · Auto" if auto else "VN · Hotkey")
         else:
             self._show_state("idle" if self.s["mode"] == "auto" else "hotkey",
                              "On · Auto" if self.s["mode"] == "auto" else "On · Hotkey")
@@ -366,11 +371,12 @@ class Toolbar:
         def mode():
             return [("item", "Auto · translate after scrolling", s["mode"] == "auto", lambda: a.set_mode("auto"), None),
                     ("item", "Hotkey only", s["mode"] == "hotkey", lambda: a.set_mode("hotkey"),
-                     s["hotkey_translate"].upper())]
+                     pretty(s["hotkey_translate"]))]
 
         def order():
             return [("item", "Manga · right → left", s["layout"] == "manga", lambda: a.set_layout("manga"), None),
-                    ("item", "Webtoon · left → right", s["layout"] == "webtoon", lambda: a.set_layout("webtoon"), None)]
+                    ("item", "Webtoon · left → right", s["layout"] == "webtoon", lambda: a.set_layout("webtoon"), None),
+                    ("item", "Visual novel · text box", s["layout"] == "vn", lambda: a.set_layout("vn"), None)]
 
         def capture():
             return [("item", "Browser page", not region(), lambda: a.set_capture("window"), None),
@@ -390,19 +396,46 @@ class Toolbar:
                     ("sep",),
                     ("entry", "Minimum size", s["font_min"], a.set_font_size, "px"),
                     ("sep",),
+                    ("item", "Text colour…", False,
+                     lambda: a.pick_overlay_color("overlay_fg", "Translated text colour"), s["overlay_fg"], "close"),
+                    ("item", "Background colour…", False,
+                     lambda: a.pick_overlay_color("overlay_bg", "Translated box background"), s["overlay_bg"], "close"),
+                    ("item", "Reset colours", False, a.reset_overlay_colors, None),
+                    ("sep",),
+                    ("item", "VN: use the game's box colour", bool(s["vn_game_colors"]), a.toggle_vn_colors, None),
+                    ("item", "Hide box under the mouse", bool(s["hover_hide"]), a.toggle_hover_hide, None),
                     ("item", "Show overlay in screenshots", bool(s["overlay_in_screenshots"]),
                      a.toggle_overlay_capture, None)]
 
         def top():
-            return [
-                ("sub", "Mode", "Auto" if s["mode"] == "auto" else "Hotkey", mode),
-                ("sub", "Reading order", "Manga" if s["layout"] == "manga" else "Webtoon", order),
-                ("sub", "Source language", short.get(s["source_lang"], s["source_lang"]), language),
-                ("sub", "Capture", "My frame" if region() else "Browser page", capture),
-                ("sub", "Text", f"{s['font_min']} px", text),
-                ("sep",),
-                ("item", "API keys & models…", False, self.open_api_dialog, None, "close"),
-            ]
+            layout = {"manga": "Manga", "webtoon": "Webtoon", "vn": "Visual novel"}.get(s["layout"], "Manga")
+            keys = [("item", "Translate key…", False,
+                     lambda: a.open_key_dialog("hotkey_translate", "Translate key", self._anchor(self.btn_settings)),
+                     pretty(s["hotkey_translate"]), "close")]
+            if s["layout"] == "vn":
+                r = s["vn_region"]
+                rows = [
+                    ("sub", "Reading order", layout, order),
+                    ("sub", "Source language", short.get(s["source_lang"], s["source_lang"]), language),
+                    ("item", "Text box frame…", False, a.select_region,
+                     f"{r[2]}×{r[3]}" if r else "not drawn", "close"),
+                    ("sub", "Text", f"{s['font_min']} px", text),
+                    ("sep",),
+                    ("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
+                     pretty(s["hotkey_vn_auto"])),
+                ]
+                keys.append(("item", "Auto-scan key…", False,
+                             lambda: a.open_key_dialog("hotkey_vn_auto", "Auto-scan key", self._anchor(self.btn_settings)),
+                             pretty(s["hotkey_vn_auto"]), "close"))
+            else:
+                rows = [
+                    ("sub", "Mode", "Auto" if s["mode"] == "auto" else "Hotkey", mode),
+                    ("sub", "Reading order", layout, order),
+                    ("sub", "Source language", short.get(s["source_lang"], s["source_lang"]), language),
+                    ("sub", "Capture", "My frame" if region() else "Browser page", capture),
+                    ("sub", "Text", f"{s['font_min']} px", text),
+                ]
+            return rows + keys + [("sep",), ("item", "API keys & models…", False, self.open_api_dialog, None, "close")]
         self._popup(top, self.btn_settings, persistent=True)
 
     def _menu_closed(self):

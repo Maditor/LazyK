@@ -76,6 +76,8 @@ class Overlay(_ClickThroughWindow):
         self.settings = settings
         self._fonts = {}
         self.rect = None
+        self._hit = []        # (tag, screen bbox, polygon or None) per painted box, for hover-hide
+        self._hover_tag = None
 
     def _font(self, size):
         key = (self.settings["font_family"], size, bool(self.settings["font_bold"]))
@@ -93,21 +95,28 @@ class Overlay(_ClickThroughWindow):
         s = self.settings
         # The tool always hides the overlay before its own capture, so it may appear in the user's
         # screenshots (Print Screen, Snipping Tool) without being read back by the OCR
-        self.exclude_from_capture = not s["overlay_in_screenshots"]
+        # Visual novel auto-scan watches the screen: our own translation must not look like new text
+        self.exclude_from_capture = (not s["overlay_in_screenshots"]) or (s["layout"] == "vn" and bool(s["vn_auto"]))
         x, y, w, h = rect
         self.rect = rect
         scale = dpi / 96.0
         self.canvas.delete("all")
         self.place(x, y, w, h)
         boxes = layout_items(items, w, h, s, scale, self._metrics)
+        self._hit, self._hover_tag = [], None
         radius = s["corner_radius"] * scale
         outline = s["overlay_outline"] or ""
-        for b in boxes:
+        for i, b in enumerate(boxes):
+            tag = f"box{i}"
+            first = len(self.canvas.find_all())
             if b["kind"] == "poly":
                 # Clean the inside of the bubble, following its real outline
                 self.canvas.create_polygon(b["poly"], fill=b["fill"], outline="")
+                pts = b["poly"]
+                self._hit.append((tag, b["rect"], list(zip(pts[0::2], pts[1::2]))))
             else:
                 x1, y1, x2, y2 = b["rect"]
+                self._hit.append((tag, b["rect"], None))
                 if s["overlay_shadow"]:
                     off = max(1, round(2 * scale))
                     rounded_rect(self.canvas, x1 + off, y1 + off, x2 + off, y2 + off, radius,
@@ -118,11 +127,49 @@ class Overlay(_ClickThroughWindow):
             for line, cx, cy in b["lines"]:
                 self.canvas.create_text(cx, cy, text=line, font=font, fill=b.get("ink", s["overlay_fg"]),
                                         anchor="center")
+            for item in self.canvas.find_all()[first:]:
+                self.canvas.addtag_withtag(tag, item)
         self.show()
         log.info("Overlay: %d boxes at %s (dpi %s)", len(boxes), rect, dpi)
 
+    @staticmethod
+    def _inside(pt, bbox, poly):
+        x, y = pt
+        x1, y1, x2, y2 = bbox
+        if not (x1 <= x <= x2 and y1 <= y <= y2):
+            return False
+        if not poly:
+            return True
+        inside, j = False, len(poly) - 1  # ray casting for bubbles with a real outline
+        for i in range(len(poly)):
+            xi, yi = poly[i]
+            xj, yj = poly[j]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-9) + xi:
+                inside = not inside
+            j = i
+        return inside
+
+    def set_hover(self, screen_pt):
+        """Hide the one box under the mouse (screen px); None shows everything again."""
+        tag = None
+        if screen_pt and self.visible and self.rect:
+            ox, oy = self.rect[0], self.rect[1]
+            pt = (screen_pt[0] - ox, screen_pt[1] - oy)
+            for t, bbox, poly in reversed(self._hit):
+                if self._inside(pt, bbox, poly):
+                    tag = t
+                    break
+        if tag == self._hover_tag:
+            return
+        if self._hover_tag:
+            self.canvas.itemconfigure(self._hover_tag, state="normal")
+        if tag:
+            self.canvas.itemconfigure(tag, state="hidden")
+        self._hover_tag = tag
+
     def clear(self):
         self.canvas.delete("all")
+        self._hit, self._hover_tag = [], None
         self.hide()
 
 

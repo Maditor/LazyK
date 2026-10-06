@@ -138,11 +138,12 @@ Chấm tròn trên thanh công cụ cho biết LazyK đang làm gì:
 
 | Phím | Chức năng |
 |---|---|
-| `Alt + T` | Dịch ngay |
+| `Alt + T` | Dịch ngay (đổi được ở ⚙ → Translate key…) |
 | `Esc` | Ẩn bản dịch |
 | `Alt + Shift + T` | Tạm dừng / chạy lại |
 | `Alt + Shift + A` | Đổi chế độ Auto ↔ Hotkey |
 | `Alt + Shift + R` | Kéo khung chọn vùng |
+| `Alt + Shift + V` | Visual novel: bật / tắt tự quét khi chữ đổi (đổi được ở ⚙ → Auto-scan key…) |
 | `Ctrl + Alt + Q` | Thoát |
 
 ### Cài đặt (nút ⚙)
@@ -152,10 +153,28 @@ Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấ
 | Mục | Ý nghĩa |
 |---|---|
 | **Mode** | *Auto*: tự dịch khi dừng cuộn · *Hotkey only*: chỉ dịch khi bấm `Alt + T` |
-| **Reading order** | *Manga*: đọc phải → trái · *Webtoon*: đọc trái → phải |
+| **Reading order** | *Manga*: đọc phải → trái · *Webtoon*: đọc trái → phải · *Visual novel · text box*: dịch game visual novel (xem bên dưới) |
 | **Source language** | Ngôn ngữ gốc: Tự nhận / Nhật / Hàn / Trung / Anh |
 | **Capture** | Chụp *cả trang trình duyệt* hay chỉ *khung bạn đã kéo* |
-| **Text** | Font chữ, **cỡ chữ tối thiểu** (chữ dịch không bao giờ nhỏ hơn cỡ này), hiện bản dịch trong ảnh chụp màn hình |
+| **Text** | Font chữ, **cỡ chữ tối thiểu** (chữ dịch không bao giờ nhỏ hơn cỡ này), **màu chữ**, **màu nền**, *Hide box under the mouse* (rê chuột vào ô dịch thì ô đó tạm ẩn để xem phần bên dưới), hiện bản dịch trong ảnh chụp màn hình |
+| **Translate key…** | Tự gán phím cho nút dịch: bấm một phím bất kỳ (`~`, `F8`, `Ctrl+Q`…) hoặc **nút phụ của chuột** (Mouse 4 / 5) hay bấm giữa chuột. Nút chuột đã gán sẽ không còn Back / Forward trong trình duyệt |
+
+### Chế độ Visual novel
+
+⚙ → **Reading order → Visual novel · text box**. Lần đầu tool bảo bạn kéo khung (⛶) **quanh hộp thoại của game**
+(kéo sát hộp thoại, không kéo cả màn hình: ảnh càng nhỏ càng nhanh). Khung này được nhớ riêng, không đè khung manga.
+
+* **Quét tay:** bấm phím dịch (mặc định `Alt + T`, hoặc phím / nút chuột Anh đã gán ở *Translate key…*).
+* **Tự quét khi chữ đổi:** bật ở ⚙ → *Auto-scan when text changes* hoặc phím `Alt + Shift + V`. Mặc định **tắt**.
+  Tool chỉ nhìn khung nhỏ vài lần mỗi giây và chỉ khi cửa sổ game đang ở trước; chữ đổi thì bản dịch cũ ẩn ngay,
+  đợi chữ chạy xong (hiệu ứng typewriter) rồi mới quét một lần. Tắt đi là tool hoàn toàn không nhìn màn hình nữa.
+* Bản dịch phủ lên hộp thoại với **màu của chính hộp thoại** (tắt ở ⚙ → Text → *VN: use the game's box colour*).
+  Rê chuột vào để ẩn tạm và xem chữ gốc. Dòng đã dịch rồi lấy từ cache nên hiện gần như tức thì.
+* Game phải chạy **cửa sổ hoặc không viền** (borderless). Fullscreen độc quyền thì overlay không hiện lên trên được.
+* Khi Auto-scan đang bật, bản dịch **không xuất hiện trong ảnh chụp màn hình** (nếu không nó tự làm chữ đổi và quét lặp).
+* Trong chế độ này cuộn chuột / Space / PageDown **không** kích hoạt quét (VN dùng chúng để đọc tiếp).
+* Chỉnh sâu trong `settings.json`: `vn_poll_ms` (200), `vn_stable_ms` (350: tăng nếu game chạy chữ có đoạn ngắt),
+  `vn_change_pct` (0.3: tăng nếu có icon "bấm để tiếp" to và nhấp nháy làm tool tưởng chữ đổi).
 
 ### Kéo khung chọn vùng (⛶)
 Hữu ích khi trang đọc truyện có menu, bình luận hoặc nền rối bên cạnh. Bấm **⛶**, màn hình tối lại, **kéo một khung ôm sát trang truyện** rồi thả chuột. Từ đó LazyK chỉ đọc trong khung này, kể cả sau khi mở lại. Muốn bỏ khung: ⚙ → *Capture* → *Browser page*.
