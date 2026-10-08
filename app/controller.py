@@ -9,10 +9,13 @@ from .api import Cancelled
 from .api import SERVER_NAMES
 from .api_dialog import ApiDialog, short_model
 from .hotkeys import InputWatcher, pretty
+from . import overlay as overlay_mod
 from .overlay import Overlay, StatusPill
 from .pipeline import Pipeline, grab
+from .record import Record
 from .region import RegionSelector
 from .toolbar import LANG_CYCLE, Toolbar
+from .tts import Speaker
 from .vn import VNWatcher
 
 log = logging.getLogger(__name__)
@@ -33,10 +36,15 @@ class App:
             self.root.iconphoto(True, self._icon)  # default icon for every window of the app
         except Exception:
             pass
+        overlay_mod.DEV["on"] = bool(settings["developer_mode"])
         self.overlay = Overlay(self.root, settings)
         self.status = StatusPill(self.root)
         self.pipeline = Pipeline(settings)
         self.q = queue.Queue()
+        self.record = Record(settings)
+        self.tts = Speaker(settings, on_error=lambda m: self.q.put(("toast", "error", m, 4000)))
+        if settings["tts_enabled"]:
+            self.tts.warm()  # load edge-tts now so the first reading starts at once
         self.gen = 0            # job generation: results of older jobs are dropped
         self.cancel = None
         self.busy = False
@@ -51,11 +59,16 @@ class App:
         self._fg_tick = 0
         self.selecting = False   # region picker open
         self.toolbar = Toolbar(self.root, self)
+        self.taskbar = None
+        self.tray = None
+        self.tray_ok = False     # False: no tray icon (pystray missing) -> the taskbar button stays as the way back
+        if settings["taskbar_icon"]:
+            self._make_taskbar()
         self.watcher = InputWatcher(
             {"translate": settings["hotkey_translate"], "hide": settings["hotkey_hide"],
              "pause": settings["hotkey_pause"], "quit": settings["hotkey_quit"],
              "mode": settings["hotkey_mode"], "region": settings["hotkey_region"],
-             "vn_auto": settings["hotkey_vn_auto"]},
+             "vn_auto": settings["hotkey_vn_auto"], "toolbar": settings["hotkey_toolbar"]},
             on_hotkey=lambda name: self.q.put(("hotkey", name)),
             on_scroll=lambda x, y: self.q.put(("scroll", x, y)),
         )
@@ -63,6 +76,7 @@ class App:
     # ------------------------------------------------------------ lifecycle
     def run(self):
         self.watcher.start()
+        self._make_tray()
         self.vn_watcher = VNWatcher(self)  # idle unless Reading order = Visual novel and auto-scan is on
         self.vn_watcher.start()
         self.root.after(30, self._poll)
@@ -78,6 +92,10 @@ class App:
 
     def quit(self):
         self._cancel_job()
+        self.record.clear()  # the record only lives as long as the session
+        if self.tray:
+            self.tray.stop()  # its thread would keep the process alive
+            self.tray = None
         self.watcher.stop()
         if getattr(self, "vn_watcher", None):
             self.vn_watcher.stop()
@@ -148,11 +166,23 @@ class App:
                 self.select_region()
             elif name == "vn_auto":
                 self.toggle_vn_auto()
+            elif name == "toolbar":
+                self.toggle_toolbar()
+        elif kind == "tray":  # from the tray icon's thread
+            if ev[1] == "toggle":
+                self.toggle_toolbar()
+            elif ev[1] == "quit":
+                self.quit()
         elif kind == "vn_hide":
             if self.s["layout"] == "vn" and (self.overlay.visible or self.busy):
                 self._cancel_job()
                 self.overlay.clear()
                 self.status.hide()
+        elif kind == "vn_restore":
+            if (self.s["layout"] == "vn" and self.s["vn_auto"] and not self.paused and not self.busy
+                    and not self.overlay.visible and self.last):
+                self.overlay.show_items(*self.last)
+                self.toolbar.raise_()
         elif kind == "vn_scan":
             if self.s["layout"] == "vn" and self.s["vn_auto"] and not self.paused:
                 self.translate(auto=True)
@@ -185,6 +215,10 @@ class App:
             self.overlay.show_items(rect, items, dpi)
             self.toolbar.raise_()
             self.last = (rect, items, dpi)
+            if not cached:
+                self.record.add(items)
+            if self.s["tts_enabled"] and not cached:  # a page coming back from the cache is not read again
+                self.tts.speak(items)
             n = sum(1 for it in items if it.get("translation"))
             if self.s["ocr_engine"] == "local" and not cached:
                 from . import local_ocr
@@ -200,8 +234,17 @@ class App:
 
     def _status(self, state, text, auto_hide=None):
         self.toolbar.set_status(state, text, auto_hide)
+        if getattr(self, "taskbar", None):  # hover text of the taskbar button: an error stays readable with the toolbar hidden
+            self.taskbar.set_title(text if state == "error" else "")
+        if getattr(self, "tray", None):  # same for the tray icon (the taskbar button is hidden with the toolbar)
+            self.tray.set_title(text if state == "error" else "")
+        if self.s["layout"] == "vn":
+            # Visual novel: the pill would sit at the top-right corner of the text box frame, which is
+            # in the middle of the game screen. The toolbar shows every state and error instead.
+            self.status.hide()
+            return
         # The toolbar is the main indicator; the pill near the page is optional (always for errors)
-        if self.s["show_status_pill"] or state == "error" or (self.toolbar.collapsed and state != "info"):
+        if self.s["show_status_pill"] or state == "error" or ((self.toolbar.collapsed or self.toolbar.hidden) and state != "info"):
             self.status.set(state, text, self.rect, self.dpi, auto_hide)
 
     # ------------------------------------------------------------ actions
@@ -216,6 +259,7 @@ class App:
         self.toolbar.refresh()
 
     def _cancel_job(self):
+        self.tts.stop()
         self.gen += 1
         if self.cancel:
             self.cancel.set()
@@ -361,6 +405,66 @@ class App:
         self.toolbar.refresh()
         self._status("info", "Capture: " + ("your frame" if mode == "region" else "browser page"), auto_hide=1500)
 
+    def toggle_toolbar(self):
+        """Hide / show the toolbar (hotkey, settings menu, or a click on the taskbar button)."""
+        self.toolbar.set_hidden(not self.toolbar.hidden)
+
+    def _make_taskbar(self):
+        from .taskbar import TaskbarButton
+        self.taskbar = TaskbarButton(self.root, on_click=self._taskbar_click, on_close=self.quit)
+
+    def _make_tray(self):
+        from .config import icon_path
+        from .tray import TrayIcon
+        self.tray = TrayIcon(
+            icon_path(on_dark=not winapi.system_light_theme()),  # the tray follows the taskbar theme
+            on_toggle=lambda: self.q.put(("tray", "toggle")),
+            on_quit=lambda: self.q.put(("tray", "quit")),
+            is_hidden=lambda: self.toolbar.hidden,
+            key_text=lambda: pretty(self.s["hotkey_toolbar"]))
+        self.tray_ok = self.tray.start()
+        if not self.tray_ok:
+            self.tray = None
+
+    def on_toolbar_visibility(self, hidden):
+        """Toolbar hidden -> the taskbar button goes too and only the tray icon stays. Without a tray the
+        taskbar button stays, so there is always a way back."""
+        if self.taskbar:
+            self.taskbar.set_visible(not (hidden and self.tray_ok))
+        if self.tray:
+            self.tray.refresh()
+
+    def _taskbar_click(self):
+        if self.toolbar.hidden:
+            self.toolbar.set_hidden(False)
+        else:
+            self.toolbar.raise_()
+        self.restore_focus()
+
+    def toggle_taskbar_icon(self):
+        on = not self.s["taskbar_icon"]
+        self.s.update(taskbar_icon=on)
+        if on and not self.taskbar:
+            self._make_taskbar()
+            if self.toolbar.hidden:
+                self.on_toolbar_visibility(True)
+        elif not on and self.taskbar:
+            self.taskbar.destroy()
+            self.taskbar = None
+        self.toolbar.refresh()
+
+    def toggle_developer_mode(self):
+        """Developer mode: OBS, Game Bar etc. can record the toolbar, menus, status pill and translation."""
+        on = not self.s["developer_mode"]
+        self.s.update(developer_mode=on)
+        overlay_mod.DEV["on"] = on
+        for w in (self.overlay, self.status, self.toolbar.tip):
+            w.apply_capture()
+        winapi.set_capture_excluded(self.toolbar.hwnd, not on)
+        self.rerender()
+        self.toolbar.refresh()
+        self._status("info", "Developer mode " + ("ON: recorders can see the tool" if on else "off"), auto_hide=2500)
+
     def toggle_overlay_capture(self):
         self.s.update(overlay_in_screenshots=not self.s["overlay_in_screenshots"])
         self.rerender()  # re-applies the capture setting to the visible overlay
@@ -391,6 +495,7 @@ class App:
 
     def toggle_overlay(self):
         if self.overlay.visible:
+            self.tts.stop()
             self.overlay.clear()
         elif self.last and not self.busy:
             self.overlay.show_items(*self.last)
@@ -431,13 +536,13 @@ class App:
 
     # ------------------------------------------------------------ translate key
     HOTKEY_KEYS = ("hotkey_translate", "hotkey_hide", "hotkey_pause", "hotkey_quit", "hotkey_mode",
-                   "hotkey_region", "hotkey_vn_auto")
+                   "hotkey_region", "hotkey_vn_auto", "hotkey_toolbar")
 
     def _bindings(self):
         return {"translate": self.s["hotkey_translate"], "hide": self.s["hotkey_hide"],
                 "pause": self.s["hotkey_pause"], "quit": self.s["hotkey_quit"],
                 "mode": self.s["hotkey_mode"], "region": self.s["hotkey_region"],
-                "vn_auto": self.s["hotkey_vn_auto"]}
+                "vn_auto": self.s["hotkey_vn_auto"], "toolbar": self.s["hotkey_toolbar"]}
 
     def open_key_dialog(self, setting="hotkey_translate", title="Translate key", anchor=None):
         from .config import DEFAULTS
@@ -457,6 +562,8 @@ class App:
         self.s.update(**{setting: spec})
         self.watcher.set_bindings(self._bindings())
         self.toolbar.refresh()
+        if self.tray:
+            self.tray.refresh()  # the menu shows the toolbar key
         self._status("info", f"{title}: {pretty(spec)}", auto_hide=2500)
         self.restore_focus()
 
@@ -479,11 +586,74 @@ class App:
             self.toolbar.refresh()
         self.restore_focus()
 
-    def reset_overlay_colors(self):
-        from .config import DEFAULTS
-        self.s.update(overlay_bg=DEFAULTS["overlay_bg"], overlay_fg=DEFAULTS["overlay_fg"])
+    def set_overlay_opacity(self, text):
+        """Typed in Settings → Text → Background opacity (0-100 %)."""
+        try:
+            v = int(float(str(text).strip().rstrip("%")))
+        except ValueError:
+            return
+        self.s.update(overlay_opacity=max(0, min(100, v)))
         self.rerender()
         self.toolbar.refresh()
+
+    def set_overlay_blur(self, text):
+        """Typed in Settings → Text → Background blur (0-40 px)."""
+        try:
+            v = int(float(str(text).strip()))
+        except ValueError:
+            return
+        self.s.update(overlay_blur=max(0, min(40, v)))
+        self.rerender()
+        self.toolbar.refresh()
+
+    def reset_overlay_colors(self):
+        from .config import DEFAULTS
+        self.s.update(overlay_bg=DEFAULTS["overlay_bg"], overlay_fg=DEFAULTS["overlay_fg"],
+                      overlay_opacity=DEFAULTS["overlay_opacity"], overlay_blur=DEFAULTS["overlay_blur"])
+        self.rerender()
+        self.toolbar.refresh()
+
+    def toggle_record(self):
+        self.s.update(record_enabled=not self.s["record_enabled"])
+        self.toolbar.refresh()
+
+    def open_record(self):
+        if not self.record.open():
+            self._status("info", "Nothing recorded yet", auto_hide=2000)
+
+    def toggle_tts(self):
+        self.s.update(tts_enabled=not self.s["tts_enabled"])
+        if self.s["tts_enabled"]:
+            self.tts.warm()
+        else:
+            self.tts.stop()
+        self.toolbar.refresh()
+
+    def set_tts_speed(self, text):
+        """Typed in Settings → Read aloud → Speed (50-200 %). Plays a short sample."""
+        from . import tts
+        try:
+            v = int(float(str(text).strip().rstrip("%")))
+        except ValueError:
+            return
+        self.s.update(tts_speed=max(50, min(200, v)))
+        self.toolbar.refresh()
+        self.tts.speak([tts.sample_text(self.s)])
+
+    def set_tts_volume(self, text):
+        """Typed in Settings → Read aloud → Volume (0-100 %). Plays a short sample."""
+        from . import tts
+        try:
+            v = int(float(str(text).strip().rstrip("%")))
+        except ValueError:
+            return
+        self.s.update(tts_volume=max(0, min(100, v)))
+        self.toolbar.refresh()
+        self.tts.speak([tts.sample_text(self.s)])
+
+    def test_tts(self):
+        from . import tts
+        self.tts.speak([tts.sample_text(self.s)])
 
     def toggle_hover_hide(self):
         self.s.update(hover_hide=not self.s["hover_hide"])
@@ -606,15 +776,17 @@ class App:
         self._status("scanning", "Scanning…")
         delay = 15 if (self.s["layout"] == "vn" and self.s["vn_auto"]) else CAPTURE_DELAY_MS
         self.root.after(delay, lambda: threading.Thread(
-            target=self._work, args=(gen, rect, dpi, cancel), daemon=True).start())
+            target=self._work, args=(gen, rect, dpi, cancel, auto), daemon=True).start())
 
-    def _work(self, gen, rect, dpi, cancel):
+    def _work(self, gen, rect, dpi, cancel, auto=True):
         try:
             if cancel.is_set():
                 return
             img = grab(rect)
+            fresh = (not auto) and self.s["layout"] == "vn"  # hotkey re-scan in VN mode: skip the cache
             items, cached = self.pipeline.process(
-                img, cancel, lambda st, msg: self.q.put(("status", gen, st, msg)), scale=dpi / 96.0)
+                img, cancel, lambda st, msg: self.q.put(("status", gen, st, msg)), scale=dpi / 96.0,
+                use_cache=not fresh)
             self.q.put(("done", gen, rect, dpi, items, cached))
         except Cancelled:
             log.info("Job %d cancelled", gen)

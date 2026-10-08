@@ -38,7 +38,8 @@ model and model list (editable, one per line).
 | `Alt+T` | Translate the active window now (works in both modes) |
 | `Esc` | Hide the overlay |
 | `Alt+Shift+T` | Pause / resume the tool |
-| `Ctrl+Alt+Q` | Quit (until the tray icon exists) |
+| `Alt+Shift+H` | Hide / show the toolbar (one shared key; also in the tray menu) |
+| `Ctrl+Alt+Q` | Quit (also: tray icon → Quit LazyK) |
 
 **Auto mode (default):** just read. When you scroll a browser (wheel, PageUp/PageDown, Space, arrows)
 the overlay hides at once; ~700 ms after you stop, the page is captured and translated. Only the apps in
@@ -123,10 +124,16 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `layout` = `vn` | | Visual novel mode: `app/vn.py` (one small read + one translation per line, no tiles / bubbles) |
 | `vn_region` | `null` | Text box frame (physical px), separate from `region` |
 | `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Alt+Shift+V`) |
+| `hotkey_toolbar` | `alt+shift+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Show / hide toolbar key…** |
+| `taskbar_icon` | `true` | Taskbar button (right-click → Close window quits; a click shows the toolbar). Hidden together with the toolbar |
 | `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |
 | `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; use the text box's own colour for the overlay |
 | `hover_hide` | `true` | Mouse over a translated box hides that box until the mouse leaves |
 | `hide_on_scroll` | `true` | |
+| `tts_enabled` | `false` | Read the translation aloud after each fresh translation (⚙ → Read aloud). Not read again for cached pages |
+| `tts_voice` | `auto` | `auto` = by `target_lang` (Vietnamese → `vi-VN-HoaiMyNeural`), or any Edge voice name, e.g. `vi-VN-NamMinhNeural` |
+| `tts_speed`, `tts_volume` | `100`, `100` | Speed 50–200 % (sent to the service as `rate`), volume 0–100 % (MCI `setaudio`, so never above the system volume) |
+| `record_enabled` | `true` | Append every fresh translation to `record-lazyk.txt` next to `settings.json`; the file is deleted when LazyK quits and emptied at start |
 | `show_status_pill` | `false` | Extra status pill near the page (errors always show) |
 | `capture_mode`, `region` | `window`, `null` | Set by the ⛶ button |
 | `browser_top_crop` | `0` | Logical px cut from the top, only used when the browser page area can't be detected (Firefox). ~85 for Firefox. |
@@ -195,8 +202,12 @@ app/pipeline.py      capture, hash cache, OCR → translate, debug dump
 app/overlay.py       overlay + status pill
 app/hotkeys.py       global hotkeys, mouse buttons and scroll watching
 app/vn.py            visual novel mode: one-line read + translate, text-box change watcher
+app/tts.py           read aloud: edge-tts voices, chunked + parallel synthesis, MCI playback, retries
+app/record.py        session record of the translations (record-lazyk.txt)
 app/controller.py    Tk loop, jobs on worker threads, cancellation
 app/toolbar.py       floating toolbar, tooltips, font picker
+app/tray.py          system tray icon (pystray): show / hide toolbar, quit
+app/taskbar.py       taskbar button (hidden while the toolbar is hidden)
 app/preview.py       PIL rendering for --image
 ```
 
@@ -216,3 +227,69 @@ app/preview.py       PIL rendering for --image
 * Downloads live in `%LOCALAPPDATA%\LazyK\models`. onnxruntime-directml gives GPU on any DX12 card.
 * `rapidocr` is installed with `--no-deps` (it requires opencv-python, which clashes with
   opencv-python-headless); its real dependencies are listed in requirements.txt.
+
+## VN mode: local OCR reader (`local_ocr.LocalOcr.read_vn`)
+
+The comic-page reader (detect -> group -> join) misread dialogue boxes, so VN mode has its own:
+
+1. Border in the box colour around the frame (text touching the edge is otherwise not detected); text under
+   22 px is enlarged first.
+2. Detected pieces that share a vertical band are one row. A row made of several pieces is read again as a
+   whole line by a separate rec-only RapidOCR instance (`_rapid(kind, use_gpu, rec_only=True)`; never call a
+   normal engine with `use_det=False`, it corrupts its later calls). This removes scrambled / duplicated /
+   clipped words.
+3. First row = speaker name only if it is short, has no sentence end, and is set apart (gap / size / indent /
+   brackets / own colour). `read_vn` returns `{name, text, trace}`; the trace is logged ("VN OCR ...").
+4. A manual (hotkey) re-scan in VN mode skips the image cache; cache key bumped to `v6`.
+
+## Overlay look: background opacity / blur
+
+`overlay_opacity` (0-100 %, 100 = solid, the old look) and `overlay_blur` (px). Tk canvases have no alpha or
+blur, so a see-through box is a picture (`overlay.glass_image`): a screenshot of the screen under the overlay,
+blurred, tinted with the box colour, rounded corners painted in KEY_COLOR. The screenshot is taken while the
+overlay is hidden and reused on re-render. Speech-bubble polygons (manga) stay solid.
+In visual novel mode the status pill is never shown (it sat at the frame's top-right corner, in the middle of
+the game); the toolbar shows all states and errors.
+
+Status callbacks: `LocalOcr` reports "Loading local OCR…" with ONE argument (`on_status(msg)`), while the
+pipeline's own `on_status` takes `(state, msg)`. Always wrap it (`lambda m: on_status("scanning", m)`) when
+calling `read` / `read_vn`.
+
+VN auto-scan: a passing change in the box (the game's mouse-over effect, a blinking arrow) hides the visible
+translation (`vn_hide`). When the box settles on the SAME text again the watcher sends `vn_restore`, which shows
+`App.last` again: no scan, no API call. (Before, nothing came back until the hide/show key was pressed.)
+`Overlay.show_items` applies hover-hide right after `show()`, so a box under the mouse never flashes.
+
+## Developer mode (Settings → Developer mode)
+
+`developer_mode` makes every tool window visible to screen recorders (OBS, Game Bar, Snipping Tool): toolbar,
+status pill, tooltips and the translation overlay. Normally they use `WDA_EXCLUDEFROMCAPTURE` so the OCR and
+the VN watcher never read the tool's own pixels. Implementation: `overlay.DEV["on"]` is read by the
+`exclude_from_capture` property of every `_ClickThroughWindow`; `winapi.set_capture_excluded` re-applies it live.
+Side effect handled: with the translation visible to the capture, the VN auto-scan watcher would see its own
+box appear as "text changed" and loop (hide / scan / hide ...). While the overlay is painted into the capture,
+`VNWatcher` ignores the pixels under the overlay boxes (`_overlay_mask`). Limit: text changes hidden under a box
+that covers the whole frame are not seen then; use the scan key, or turn developer mode off.
+A toolbar or pill placed over the captured page / VN frame can be read by the OCR in this mode.
+
+## Taskbar button and hidden toolbar
+
+`taskbar.TaskbarButton` is a minimised Toplevel whose only job is the taskbar button (all other windows are
+tool windows / overlays without one). Windows restores it on a click: `<Map>` re-minimises it and calls
+`App._taskbar_click` (shows or raises the toolbar). Its WM_DELETE_WINDOW (right-click → Close window) calls
+`App.quit`. Its title carries the last error, so an error is readable while the toolbar is hidden.
+`Toolbar.set_hidden` hides the window with ShowWindow(SW_HIDE) (like the overlay: no focus change); `raise_`
+and `_keep_on_top` do nothing while hidden. The hidden state is not saved, a restart always shows the toolbar.
+
+## Tray icon
+
+`tray.TrayIcon` (pystray, own thread) lives as long as the app: right-click → **Show / Hide toolbar** (shows the
+shared key) and **Quit LazyK**; a left click toggles the toolbar. Its callbacks only put `("tray", "toggle" | "quit")`
+in `App.q`, so Tk is only touched from the main thread. `Toolbar.set_hidden` calls `App.on_toolbar_visibility`,
+which hides / restores the taskbar button (`TaskbarButton.set_visible`, a withdrawn window has no button) and
+rebuilds the tray menu text. If the tray cannot start (pystray not installed: run `setup.bat` again),
+`App.tray_ok` is False and the taskbar button stays visible, so a hidden toolbar can always be brought back.
+While the toolbar is hidden an error shows in the status pill and in the tray icon's hover text.
+`App.quit` must call `TrayIcon.stop()`: pystray's thread is not a daemon.
+On Windows 11 new tray icons start in the overflow (^) area: drag the LazyK icon out to keep it visible.
+Settings has no hide button: ⚙ → **Show / hide toolbar key…** only changes the shared key.

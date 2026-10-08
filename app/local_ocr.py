@@ -236,8 +236,10 @@ def _mocr_post(text):
 
 
 # ---------------------------------------------------------------- RapidOCR (PaddleOCR models)
-def _rapid(kind, use_gpu):
-    """kind: 'multi' (built-in PP-OCRv6: ja / zh / en) | 'ko' (PP-OCRv5 Korean) | 'det' (detector only)."""
+def _rapid(kind, use_gpu, rec_only=False):
+    """kind: 'multi' (built-in PP-OCRv6: ja / zh / en) | 'ko' (PP-OCRv5 Korean) | 'det' (detector only).
+    rec_only: no detector; the image given is already one line of text (visual novel row re-read).
+    It must be its own instance: calling a normal engine with use_det=False corrupts its later calls."""
     from rapidocr import RapidOCR
     import rapidocr
     builtin = os.path.join(os.path.dirname(rapidocr.__file__), "models")
@@ -256,6 +258,8 @@ def _rapid(kind, use_gpu):
     }
     if kind == "det":
         params["Global.use_rec"] = False
+    if rec_only:
+        params["Global.use_det"] = False
     if kind == "ko":
         from rapidocr import LangRec, ModelType, OCRVersion
         params.update({"Rec.model_path": path("korean_rec.onnx"), "Rec.lang_type": LangRec.KOREAN,
@@ -353,6 +357,103 @@ def _group_lines(lines, cjk_join, gray=None):
     return blocks
 
 
+# ---------------------------------------------------------------- visual novel text box
+# The generic page reader (detect -> group -> join) is built for comic pages. On a dialogue box it
+# fails in four ways: the speaker name is glued to the dialogue ("Yuki I never ..."), one text line
+# is detected as two overlapping pieces (scrambled / duplicated / clipped words), text touching the
+# frame edge is not detected at all, and small text is missed. The VN reader below fixes each.
+_VN_END = re.compile(r"[.!?…。！？\"”」』)）]$")
+_VN_BRACKETS = "【】[]「」『』()（）<>《》:："
+
+
+def _pad_bgr(bgr, pad):
+    """Border in the box's own colour: detectors miss text that touches the edge of the frame."""
+    import cv2
+    ring = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
+    col = [int(v) for v in np.median(ring, axis=0)]
+    return cv2.copyMakeBorder(bgr, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=col)
+
+
+def _vn_keep(lines):
+    """Gentle filter for a dialogue box: unlike _clean it keeps unsure lines (they get re-read)."""
+    out = [l for l in lines if _TEXTY.search(l["text"]) and l["score"] >= 0.3]
+    if not out:
+        return []
+    hs = sorted(l["box"][3] - l["box"][1] for l in out)
+    med = hs[len(hs) // 2]
+    keep = []
+    for l in out:
+        t = l["text"].replace(" ", "")
+        if len(t) == 1 and l["score"] < 0.9:
+            continue  # a lone, unsure character: a misread mark
+        if (l["box"][3] - l["box"][1]) < 0.4 * med:
+            continue  # tiny: furigana, a blinking arrow
+        keep.append(l)
+    return keep
+
+
+def _vn_rows(lines):
+    """Detected pieces -> text rows. Pieces that share a vertical band are the SAME row, however they
+    were cut (this is what fixes the scrambled / duplicated words)."""
+    rows = []
+    for l in sorted(lines, key=lambda l: l["box"][1] + l["box"][3]):
+        b = l["box"]
+        for r in rows:
+            ov = min(b[3], r["y2"]) - max(b[1], r["y1"])
+            if ov > 0.5 * min(b[3] - b[1], r["y2"] - r["y1"]):
+                r["segs"].append(l)
+                r["x1"], r["y1"] = min(r["x1"], b[0]), min(r["y1"], b[1])
+                r["x2"], r["y2"] = max(r["x2"], b[2]), max(r["y2"], b[3])
+                break
+        else:
+            rows.append({"segs": [l], "x1": b[0], "y1": b[1], "x2": b[2], "y2": b[3]})
+    rows.sort(key=lambda r: r["y1"])
+    for r in rows:
+        r["segs"].sort(key=lambda l: l["box"][0])
+    return rows
+
+
+def _row_ink(bgr, row):
+    """Colour of a row's letters: mean of the pixels that differ most from the row's background."""
+    crop = bgr[max(0, row["y1"]):row["y2"], max(0, row["x1"]):row["x2"]].reshape(-1, 3).astype(np.float32)
+    if len(crop) < 20:
+        return None
+    d = np.linalg.norm(crop - np.median(crop, axis=0), axis=1)
+    k = max(20, int(0.08 * len(crop)))
+    return crop[np.argsort(d)[-k:]].mean(axis=0)
+
+
+def _split_name(rows):
+    """First row = speaker name? It must look like one (short, no sentence end, narrower than the
+    dialogue) AND be set apart (gap, size, indent, brackets or its own colour). -> (name, body rows)"""
+    if len(rows) < 2:
+        return "", rows
+    r0, rest = rows[0], rows[1:]
+    t = r0["text"].strip()
+    core = t.strip(_VN_BRACKETS + " ")
+    if not core or len(core) > 24 or len(core.split()) > 4 or _VN_END.search(core):
+        return "", rows
+    h0, h1 = r0["y2"] - r0["y1"], rest[0]["y2"] - rest[0]["y1"]
+    w0, wb = r0["x2"] - r0["x1"], max(r["x2"] - r["x1"] for r in rest)
+    bracket_cue = t != core
+    if w0 > 0.6 * wb and not bracket_cue:
+        return "", rows
+    gap = rest[0]["y1"] - r0["y2"]
+    if len(rest) >= 2:   # compare with the normal line spacing of the dialogue itself
+        pitch = max(0, rest[1]["y1"] - rest[0]["y2"])
+        gap_cue = gap > 1.6 * pitch + 0.25 * h1
+    else:
+        gap_cue = gap > 0.8 * h1
+    size_cue = abs(h0 - h1) > 0.35 * max(h0, h1)
+    indent_cue = abs(r0["x1"] - rest[0]["x1"]) > 0.5 * h1
+    i0, i1 = r0.get("ink"), rest[0].get("ink")
+    colour_cue = i0 is not None and i1 is not None and float(np.linalg.norm(i0 - i1)) > 70
+    r0["cues"] = [n for n, v in (("gap", gap_cue), ("size", size_cue), ("indent", indent_cue),
+                                 ("bracket", bracket_cue), ("colour", colour_cue)) if v]
+    return (core, rest) if r0["cues"] else ("", rows)
+
+
+
 _TEXTY = re.compile(r"[\w぀-ヿ㐀-鿿가-힯]")
 
 
@@ -380,6 +481,9 @@ class LocalOcr:
                     use_gpu = bool(settings["local_gpu"])
                     kind = "ko" if settings["source_lang"] == "ko" and pack_ready("ko") else "multi"
                     self._get(kind, lambda: _rapid(kind, use_gpu), use_gpu)
+                    # visual novel rows are re-read by their own recognizer: load it now too, or the
+                    # first dialogue box that needs it waits for the model to load
+                    self._get(kind + "_rec", lambda: _rapid(kind, use_gpu, rec_only=True), use_gpu)
             except Exception:
                 log.exception("Local OCR warm-up failed")
         threading.Thread(target=run, daemon=True).start()
@@ -463,6 +567,111 @@ class LocalOcr:
                         b["text"] = text
                 log.info("manga-ocr: %d blocks in %.2fs", len(blocks), time.time() - t)
             return [dict(b, type="speech") for b in blocks]
+
+    # -------------------------------------------------- visual novel text box
+    def _vn_detect(self, kind, bgr, use_gpu, on_status):
+        eng = self._get(kind, lambda: _rapid(kind, use_gpu), use_gpu, on_status)
+        raw = _lines(eng(bgr), min_score=0.0)
+        good = _vn_keep(raw)
+        weight = sum(_area(l) for l in raw) or 1
+        return raw, good, sum(_area(l) * l["score"] for l in good) / weight
+
+    def _vn_reread(self, kind, bgr, row, use_gpu, on_status):
+        """Read one row again as a whole line (no detector involved): (text, score) or ("", 0)."""
+        eng = self._get(kind + "_rec", lambda: _rapid(kind, use_gpu, rec_only=True), use_gpu, on_status)
+        H, W = bgr.shape[:2]
+        m = max(4, int(0.15 * (row["y2"] - row["y1"])))
+        crop = np.ascontiguousarray(bgr[max(0, row["y1"] - m):min(H, row["y2"] + m),
+                                        max(0, row["x1"] - m):min(W, row["x2"] + m)])
+        if crop.size == 0:
+            return "", 0.0
+        res = eng(crop, use_det=False, use_cls=False, use_rec=True)
+        txts, scs = getattr(res, "txts", None) or (), getattr(res, "scores", None) or ()
+        if not txts:
+            return "", 0.0
+        return (txts[0] or "").strip(), float(scs[0]) if scs else 0.0
+
+    def read_vn(self, img: Image.Image, settings, cancel, on_status=None):
+        """Read a visual novel dialogue box -> {"name", "text", "trace"}. One frame in, one string out."""
+        src = settings["source_lang"]
+        use_gpu = bool(settings["local_gpu"])
+        if src == "ko" and not pack_ready("ko"):
+            raise RuntimeError("Local OCR: download the Korean model first (server menu → Local OCR models…)")
+        img = img.convert("RGB")
+        bgr0 = np.ascontiguousarray(np.asarray(img)[:, :, ::-1])
+        use_mocr = src in ("ja", "auto") and settings["local_manga_ocr"] and pack_ready("mocr")
+        trace = {"scale": 1.0, "kind": "", "cover": 0.0, "rows": [], "name_cues": []}
+        with self._lock:
+            import cv2
+            first = "ko" if src == "ko" else ("multi" if src in ("ja", "zh", "en") else self._last_lang)
+            kinds = [first] + ([("multi" if first == "ko" else "ko")] if pack_ready("ko") else [])
+
+            def detect_all(bgr):
+                best = None
+                for kind in kinds:
+                    if cancel.is_set():
+                        raise Cancelled()
+                    raw, good, cover = self._vn_detect(kind, bgr, use_gpu, on_status)
+                    if best is None or cover > best[1] + 0.05:
+                        best = (kind, cover, good)
+                    if cover >= 0.7:
+                        break
+                return best
+
+            # 1. detect on a copy with a border (text touching the frame edge is otherwise missed)
+            pad = max(16, int(0.06 * min(bgr0.shape[:2])))
+            work = _pad_bgr(bgr0, pad)
+            kind, cover, lines = detect_all(work)
+            # 2. small text: enlarge so the detector and the recognizer see about 32 px letters
+            hs = sorted(l["box"][3] - l["box"][1] for l in lines if l["score"] >= 0.5)
+            if hs and hs[len(hs) // 2] < 22:
+                f = min(2.5, 32.0 / hs[len(hs) // 2])
+                big = cv2.resize(bgr0, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+                work2 = _pad_bgr(big, int(pad * f))
+                kind2, cover2, lines2 = detect_all(work2)
+                if cover2 >= cover - 0.02 and len(lines2) >= len(lines):
+                    work, kind, cover, lines, trace["scale"] = work2, kind2, cover2, lines2, round(f, 2)
+            trace["kind"], trace["cover"] = kind, round(cover, 2)
+            self._last_lang = kind
+            self.hint = "" if (cover >= 0.5 or pack_ready("ko")) else "Korean page? Download the Korean model"
+            if not lines:
+                return {"name": "", "text": "", "trace": trace}
+
+            # 3. pieces -> rows; a row cut in several pieces is read again as one line
+            rows = _vn_rows(lines)
+            latin = _latin_page(lines)
+            mocr = None
+            if use_mocr and kind == "multi" and _japanese_page(lines):
+                mocr = self._get("mocr", lambda: MangaOcr(use_gpu), use_gpu, on_status)
+            for r in rows:
+                if cancel.is_set():
+                    raise Cancelled()
+                segs = r["segs"]
+                joined = ("" if (kind == "multi" and src != "en" and not latin) else " ").join(l["text"] for l in segs)
+                r["text"], r["score"], r["reread"] = joined, min(l["score"] for l in segs), False
+                if len(segs) > 1:
+                    txt, sc = self._vn_reread(kind, work, r, use_gpu, on_status)
+                    if txt and _TEXTY.search(txt) and sc >= 0.5:
+                        r["text"], r["score"], r["reread"] = txt, sc, True
+                if mocr is not None:
+                    H, W = work.shape[:2]
+                    crop = Image.fromarray(np.ascontiguousarray(
+                        work[max(0, r["y1"] - 4):min(H, r["y2"] + 4), max(0, r["x1"] - 4):min(W, r["x2"] + 4)][:, :, ::-1]))
+                    t = mocr(crop)
+                    if _TEXTY.search(t):
+                        r["text"] = t
+                r["ink"] = _row_ink(work, r)
+
+            # 4. speaker name vs dialogue
+            name, body = _split_name(rows)
+            trace["name_cues"] = rows[0].get("cues", []) if name else []
+            cjk_join = kind == "multi" and src != "en" and not latin
+            text = ("" if cjk_join else " ").join(r["text"].strip() for r in body if r["text"].strip())
+            trace["rows"] = [{"text": r["text"], "score": round(r["score"], 2), "reread": r["reread"],
+                              "box": [r["x1"], r["y1"], r["x2"], r["y2"]]} for r in rows]
+            log.info("VN OCR %s x%.1f cover %.2f: name=%r text=%r rows=%s", kind, trace["scale"], cover, name, text,
+                     [(r["text"], round(r["score"], 2), "re" if r["reread"] else "") for r in rows])
+            return {"name": name, "text": text, "trace": trace}
 
 
 _KANA = re.compile(r"[\u3040-\u30ff]")

@@ -81,6 +81,7 @@ class Toolbar:
         self.fonts = theme.fonts(root)
         self.f_small = tkfont.Font(family="Segoe UI", size=8)
 
+        self.hidden = False  # hidden with the toolbar key; never saved, so a restart always shows it
         self.win = tk.Toplevel(root)
         self.win.withdraw()
         self.win.overrideredirect(True)
@@ -258,13 +259,38 @@ class Toolbar:
         self.win.deiconify()
         self.win.update_idletasks()
         self.hwnd = winapi.tk_toplevel_hwnd(self.win)
-        winapi.make_toolbar_window(self.hwnd)
+        winapi.make_toolbar_window(self.hwnd, not self.s["developer_mode"])
         if prev and winapi.foreground_window() != prev:
             winapi.set_foreground(prev)
         self._keep_on_top()
 
+    def set_hidden(self, hidden):
+        """Hide / show the whole toolbar. Hotkeys, auto-scan and translation keep working: only the window goes."""
+        self.hidden = bool(hidden)
+        if self.hidden:
+            if self.menu:
+                self.menu.close()
+            self._tip_cancel()
+            self.tip.hide()
+            if self.picker and self.picker.win.winfo_exists():
+                self.picker.win.destroy()
+            if self.hwnd:
+                winapi.hide_window(self.hwnd)
+            else:
+                self.win.withdraw()
+        else:
+            if self.hwnd:
+                winapi.show_no_activate(self.hwnd)
+            else:
+                self.win.deiconify()
+            self.raise_()
+        self.app.on_toolbar_visibility(self.hidden)  # taskbar button / tray menu follow
+        self.app.restore_focus()
+
     def raise_(self):
         """Stay above the overlay (both are topmost; the newest one wins)."""
+        if self.hidden:
+            return
         if self.hwnd:
             winapi.show_no_activate(self.hwnd)
         else:
@@ -275,9 +301,10 @@ class Toolbar:
     def _keep_on_top(self):
         # Other topmost windows (video players, games) can cover us; re-assert every few seconds
         try:
-            self.win.attributes("-topmost", True)
-            if self.hwnd:
-                winapi.show_no_activate(self.hwnd)
+            if not self.hidden:
+                self.win.attributes("-topmost", True)
+                if self.hwnd:
+                    winapi.show_no_activate(self.hwnd)
         except tk.TclError:
             return
         self.win.after(3000, self._keep_on_top)
@@ -400,12 +427,21 @@ class Toolbar:
                      lambda: a.pick_overlay_color("overlay_fg", "Translated text colour"), s["overlay_fg"], "close"),
                     ("item", "Background colour…", False,
                      lambda: a.pick_overlay_color("overlay_bg", "Translated box background"), s["overlay_bg"], "close"),
-                    ("item", "Reset colours", False, a.reset_overlay_colors, None),
+                    ("entry", "Background opacity", s["overlay_opacity"], a.set_overlay_opacity, "%"),
+                    ("entry", "Background blur", s["overlay_blur"], a.set_overlay_blur, "px"),
+                    ("item", "Reset look", False, a.reset_overlay_colors, None),
                     ("sep",),
                     ("item", "VN: use the game's box colour", bool(s["vn_game_colors"]), a.toggle_vn_colors, None),
                     ("item", "Hide box under the mouse", bool(s["hover_hide"]), a.toggle_hover_hide, None),
                     ("item", "Show overlay in screenshots", bool(s["overlay_in_screenshots"]),
                      a.toggle_overlay_capture, None)]
+
+        def read_aloud():
+            return [("item", "Read translation aloud", bool(s["tts_enabled"]), a.toggle_tts, None),
+                    ("sep",),
+                    ("entry", "Speed", s["tts_speed"], a.set_tts_speed, "%"),
+                    ("entry", "Volume", s["tts_volume"], a.set_tts_volume, "%"),
+                    ("item", "Test voice", False, a.test_tts, None)]
 
         def top():
             layout = {"manga": "Manga", "webtoon": "Webtoon", "vn": "Visual novel"}.get(s["layout"], "Manga")
@@ -435,7 +471,19 @@ class Toolbar:
                     ("sub", "Capture", "My frame" if region() else "Browser page", capture),
                     ("sub", "Text", f"{s['font_min']} px", text),
                 ]
-            return rows + keys + [("sep",), ("item", "API keys & models…", False, self.open_api_dialog, None, "close")]
+            # Hiding / showing is done by this key and by the tray icon; here only the key is changed
+            keys.append(("item", "Show / hide toolbar key…", False,
+                         lambda: a.open_key_dialog("hotkey_toolbar", "Show / hide toolbar key",
+                                                   self._anchor(self.btn_settings)),
+                         pretty(s["hotkey_toolbar"]), "close"))
+            return rows + keys + [("sep",),
+                                  ("item", "Keep translation record", bool(s["record_enabled"]), a.toggle_record, None),
+                                  ("item", "Open translation record", False, a.open_record, "record-lazyk.txt", "close"),
+                                  ("sub", "Read aloud", "On" if s["tts_enabled"] else "Off", read_aloud),
+                                  ("item", "Show in taskbar", bool(s["taskbar_icon"]), a.toggle_taskbar_icon, None),
+                                  ("item", "Developer mode (show tool when recording)", bool(s["developer_mode"]),
+                                   a.toggle_developer_mode, None),
+                                  ("item", "API keys & models…", False, self.open_api_dialog, None, "close")]
         self._popup(top, self.btn_settings, persistent=True)
 
     def _menu_closed(self):

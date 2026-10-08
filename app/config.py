@@ -59,6 +59,8 @@ DEFAULTS = {
     "hotkey_pause": "alt+shift+t",
     "hotkey_region": "alt+shift+r",  # draw a capture frame
     "hotkey_vn_auto": "alt+shift+v",  # visual novel: auto-scan on / off
+    "hotkey_toolbar": "alt+shift+h",  # hide / show the toolbar (every function keeps working)
+    "taskbar_icon": True,           # a taskbar button: right-click → Close window quits, click shows the toolbar
     "hotkey_quit": "ctrl+alt+q",    # until the tray icon exists (step 2)
     "hide_on_scroll": True,
     # Visual novel mode
@@ -82,8 +84,11 @@ DEFAULTS = {
     "overlay_bg": "#ffffff",
     "overlay_fg": "#111111",
     "overlay_outline": "",          # e.g. "#cccccc"; empty = none
+    "overlay_opacity": 100,         # % of the box background that is solid; lower = the screen shows through
+    "overlay_blur": 0,              # px: blur of the screen seen through a see-through box (frosted glass)
     "overlay_shadow": False,
     "hover_hide": True,             # mouse over a translated box hides that box until the mouse leaves
+    "developer_mode": False,        # tool windows (toolbar, menus, status, overlay) are visible to OBS & co
     "overlay_in_screenshots": True,  # Print Screen / Snipping Tool can capture the translated page
     "font_family": "Segoe UI",
     "font_bold": True,
@@ -95,6 +100,13 @@ DEFAULTS = {
     "toolbar_pos": None,            # [x, y] physical px, remembered after dragging
     "toolbar_collapsed": False,
     "show_status_pill": False,      # the toolbar already shows the status
+    # Read aloud (text to speech, Edge voices)
+    "tts_enabled": False,           # read the translation aloud after each translation
+    "tts_voice": "auto",            # auto = by target_lang, or a voice name such as vi-VN-NamMinhNeural
+    "tts_speed": 100,               # % of normal speed (50-200)
+    "tts_volume": 100,              # % of the system volume (0-100)
+    # Session record of the translations (record-lazyk.txt next to settings.json, deleted when LazyK quits)
+    "record_enabled": True,
     # Diagnostics
     "debug_save": False,
 }

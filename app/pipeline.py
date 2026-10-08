@@ -60,13 +60,14 @@ class Pipeline:
 
     def _cache_key(self, img_key):
         s = self.settings
-        return f"{img_key}|{s['source_lang']}|{s['target_lang']}|{s['layout']}|{int(s['skip_sfx'])}|{s['box_format']}|v5|{int(s['manga_tiles'])}|{s['ocr_engine']}|{s['translator'] if s['ocr_engine'] == 'local' else 'ai'}"
+        return f"{img_key}|{s['source_lang']}|{s['target_lang']}|{s['layout']}|{int(s['skip_sfx'])}|{s['box_format']}|v6|{int(s['manga_tiles'])}|{s['ocr_engine']}|{s['translator'] if s['ocr_engine'] == 'local' else 'ai'}"
 
-    def process(self, img, cancel, on_status, scale=1.0):
-        """Return list of items {text, type, box, translation}. Raises Cancelled / errors."""
+    def process(self, img, cancel, on_status, scale=1.0, use_cache=True):
+        """Return list of items {text, type, box, translation}. Raises Cancelled / errors.
+        use_cache=False: a manual re-scan must really read again (the cached text may be the misread)."""
         s = self.settings
         key = self._cache_key(image_key(img))
-        if key in self.cache:
+        if use_cache and key in self.cache:
             self.cache.move_to_end(key)
             log.info("Cache hit")
             return self.cache[key], True

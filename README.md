@@ -3,8 +3,8 @@
 </p>
 
 <h1 align="center">LazyK</h1>
-<p align="center"><b>Đọc truyện tranh mọi thứ tiếng, theo cách lười nhất.</b><br>
-<i>Read comics in any language, the lazy way.</i></p>
+<p align="center"><b>Đọc truyện tranh và chơi visual novel mọi thứ tiếng, theo cách lười nhất.</b><br>
+<i>Read comics and play visual novels in any language, the lazy way.</i></p>
 
 ---
 
@@ -15,7 +15,9 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 3. dịch cả trang sang **tiếng Việt**,
 4. **tẩy chữ gốc và viết chữ dịch** vào đúng bóng thoại, như một bản scan đã được dịch sẵn.
 
-> 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
+Không chỉ truyện tranh: LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Đọc to bản dịch](#đọc-to-bản-dịch)).
+
+> 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. It also translates **visual novels / games with a dialogue box** line by line, can **read the translation aloud** (Edge neural voices, adjustable speed and volume) and keeps a temporary **record of the session's translations**. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
 
 ## ✨ Tính năng
 
@@ -28,6 +30,9 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 - Trang đã dịch được **nhớ lại**: cuộn quay lại là hiện ngay, không tốn lượt API.
 - **Thanh công cụ nhỏ luôn nổi trên cùng**, chọn được font chữ có sẵn trong Windows.
 - Lớp dịch **hiện được trong ảnh chụp màn hình** (Print Screen, Snipping Tool).
+- **Chế độ Visual novel**: dịch từng dòng thoại của game trong một khung nhỏ do bạn chọn, tự quét khi chữ đổi (tuỳ chọn), bản dịch phủ lên hộp thoại với màu của chính hộp thoại.
+- **Đọc to bản dịch** (tuỳ chọn, mặc định tắt): dịch xong là đọc luôn bằng giọng Microsoft Edge, chỉnh được **tốc độ** và **âm lượng**, cuộn trang là dừng.
+- **Bản ghi dịch tạm**: phần đã dịch của phiên làm việc được ghi vào `record-lazyk.txt` để xem lại, tự xoá khi thoát LazyK.
 
 ## 📋 Yêu cầu
 
@@ -36,7 +41,7 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 | Hệ điều hành | Windows 10 (bản 2004 trở lên) hoặc Windows 11 |
 | Python | 3.11 trở lên *(không cần nếu dùng bản `.exe` ở mục Releases)* |
 | API key | Google Gemini (**miễn phí**) và/hoặc Cloudflare Workers AI |
-| Mạng | Cần có để cài thư viện và gọi AI |
+| Mạng | Cần có để cài thư viện và gọi AI (và để dùng giọng đọc nếu bật *Read aloud*) |
 
 Không cần card đồ hoạ mạnh: mặc định mọi xử lý AI đều chạy trên máy chủ của Google / Cloudflare. Nếu bật **Local OCR**, việc đọc chữ chạy trên máy bạn (CPU, hoặc card đồ hoạ qua DirectML nếu có).
 
@@ -157,6 +162,8 @@ Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấ
 | **Source language** | Ngôn ngữ gốc: Tự nhận / Nhật / Hàn / Trung / Anh |
 | **Capture** | Chụp *cả trang trình duyệt* hay chỉ *khung bạn đã kéo* |
 | **Text** | Font chữ, **cỡ chữ tối thiểu** (chữ dịch không bao giờ nhỏ hơn cỡ này), **màu chữ**, **màu nền**, *Hide box under the mouse* (rê chuột vào ô dịch thì ô đó tạm ẩn để xem phần bên dưới), hiện bản dịch trong ảnh chụp màn hình |
+| **Read aloud** | Đọc to bản dịch: bật / tắt, **Speed**, **Volume**, *Test voice* (xem [Đọc to bản dịch](#đọc-to-bản-dịch)) |
+| **Keep translation record** / **Open translation record** | Bật / tắt bản ghi dịch tạm và mở nó để xem (xem [Bản ghi dịch tạm](#bản-ghi-dịch-tạm)) |
 | **Translate key…** | Tự gán phím cho nút dịch: bấm một phím bất kỳ (`~`, `F8`, `Ctrl+Q`…) hoặc **nút phụ của chuột** (Mouse 4 / 5) hay bấm giữa chuột. Nút chuột đã gán sẽ không còn Back / Forward trong trình duyệt |
 
 ### Chế độ Visual novel
@@ -175,6 +182,42 @@ Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấ
 * Trong chế độ này cuộn chuột / Space / PageDown **không** kích hoạt quét (VN dùng chúng để đọc tiếp).
 * Chỉnh sâu trong `settings.json`: `vn_poll_ms` (200), `vn_stable_ms` (350: tăng nếu game chạy chữ có đoạn ngắt),
   `vn_change_pct` (0.3: tăng nếu có icon "bấm để tiếp" to và nhấp nháy làm tool tưởng chữ đổi).
+
+### Đọc to bản dịch
+
+Bật ở ⚙ → **Read aloud** → *Read translation aloud* (mặc định **tắt**). Sau khi dịch xong, LazyK đọc các bóng thoại theo thứ tự đọc bằng giọng thần kinh của Microsoft Edge (miễn phí, không cần API key).
+
+| Mục trong ⚙ → Read aloud | Ý nghĩa |
+|---|---|
+| **Read translation aloud** | Bật / tắt đọc to |
+| **Speed** | Tốc độ đọc 50–200 % (100 = bình thường). Áp dụng cho các đoạn được tạo sau khi đổi |
+| **Volume** | Âm lượng 0–100 % so với âm lượng Windows (muốn to hơn thì tăng âm lượng hệ thống). Đổi là có hiệu lực từ đoạn kế tiếp |
+| **Test voice** | Đọc một câu mẫu. Gõ số vào Speed / Volume rồi Enter cũng đọc câu mẫu luôn |
+
+* **Dừng ngay** khi bạn cuộn trang, nhấn `Esc`, tạm dừng, ẩn bản dịch (👁) hoặc có bản dịch mới. Trang lấy lại từ cache (cuộn quay về) **không** đọc lại.
+* **Visual novel:** mỗi dòng thoại mới được đọc một lần (kèm tên nhân vật nếu có).
+* **Giọng đọc** tự chọn theo ngôn ngữ đích: tiếng Việt dùng `vi-VN-HoaiMyNeural` (nữ). Muốn giọng khác, sửa `tts_voice` trong `settings.json`, ví dụ `"vi-VN-NamMinhNeural"` (nam). Để `"auto"` thì tự chọn lại.
+* **Bắt đầu đọc nhanh:** câu dài được cắt thành các đoạn ngắn, đoạn đầu phát ngay trong khi các đoạn sau đang được tạo.
+* **Cần Internet** (giọng được tạo trên dịch vụ của Microsoft) và thư viện `edge-tts` (đã nằm trong `requirements.txt`; chạy lại `setup.bat` nếu nâng cấp từ bản cũ). Mất mạng thì chỉ hiện một thông báo ngắn, phần dịch vẫn chạy bình thường.
+* **Thử giọng ngoài app:** `.venv\Scripts\python main.py --tts "Xin chào các bạn"`.
+
+### Bản ghi dịch tạm
+
+Mỗi lần quét và dịch xong, **phần đã dịch** (không có chữ gốc) được ghi nối vào file **`record-lazyk.txt`**, nằm cạnh `settings.json`, để bạn xem lại những gì vừa đọc. Mở bằng ⚙ → **Open translation record**.
+
+```
+=== #1 · 07:59:47 ===
+1. Xin chào
+2. Bạn khỏe không?
+
+=== #2 · 08:00:12 ===
+Một dòng thoại
+```
+
+* Mỗi lần quét là một khối có số thứ tự và giờ; bóng thoại được đánh số theo thứ tự đọc.
+* Trang lấy lại từ cache và nội dung trùng với lần ghi trước **không** bị ghi lặp.
+* Đây là **file tạm của phiên làm việc**: bị xoá khi bạn thoát LazyK (✕, tray, `Ctrl + Alt + Q`, đóng cửa sổ taskbar) và được làm trống mỗi lần mở lại. Muốn giữ một đoạn thì chép ra chỗ khác trước khi thoát.
+* Tắt hẳn ở ⚙ → *Keep translation record* (khoá `record_enabled` trong `settings.json`).
 
 ### Kéo khung chọn vùng (⛶)
 Hữu ích khi trang đọc truyện có menu, bình luận hoặc nền rối bên cạnh. Bấm **⛶**, màn hình tối lại, **kéo một khung ôm sát trang truyện** rồi thả chuột. Từ đó LazyK chỉ đọc trong khung này, kể cả sau khi mở lại. Muốn bỏ khung: ⚙ → *Capture* → *Browser page*.
@@ -227,6 +270,15 @@ Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
 - Chế độ *Hotkey only* thì phải bấm `Alt + T`.
 - Chế độ *Auto* chỉ phản ứng khi cuộn trong trình duyệt được hỗ trợ (danh sách `auto_apps` trong `settings.json`).
 - Bấm ⚙ → *API keys & models…* → **Test connection** để kiểm tra key.
+</details>
+
+<details>
+<summary><b>Bật Read aloud mà không nghe thấy tiếng</b></summary>
+
+- Máy cần có Internet. Báo *"Read aloud failed (check the internet connection)"* nghĩa là không kết nối được dịch vụ giọng.
+- Báo *"install edge-tts"*: chạy lại `setup.bat` để cài thư viện còn thiếu.
+- Thử `.venv\Scripts\python main.py --tts "Xin chào"`. Nghe được ở đây mà trong app không có thì kiểm tra *Volume* (⚙ → Read aloud) và xem `logs\lazyk.log`, dòng `app.tts` ghi rõ câu bị lỗi.
+- Giọng bắt đầu chậm vài giây ở lần đọc đầu tiên là bình thường; từ lần sau nhanh hơn.
 </details>
 
 <details>
@@ -294,6 +346,8 @@ Kết quả là một file duy nhất `Output\LazyK-Setup-<phiên bản>.exe`. N
 
 - LazyK chỉ gửi **ảnh vùng trang truyện** và **chữ cần dịch** tới dịch vụ AI bạn chọn (Google Gemini hoặc Cloudflare). Không có máy chủ trung gian nào khác.
 - API key và cài đặt nằm trong `settings.json` trên máy bạn.
+- Nếu bật **Read aloud**, **phần chữ đã dịch** (không phải ảnh) được gửi tới dịch vụ giọng đọc của Microsoft Edge để tạo âm thanh. Tắt Read aloud thì không có gì được gửi.
+- `record-lazyk.txt` chỉ nằm trên máy bạn và bị xoá khi thoát LazyK.
 
 ## 🧑‍💻 Dành cho nhà phát triển
 

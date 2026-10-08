@@ -100,13 +100,16 @@ def run_vn(pipeline, client, img: Image.Image, cancel, on_status):
         name, src, tr = parse_vn(raw)
         src = src or tr  # context line for the next scan
     else:
-        blocks = local_ocr.ENGINE.read(img, s, cancel, on_status)
+        # the engine reports model loading with ONE argument (like the manga path in pipeline.py)
+        r = local_ocr.ENGINE.read_vn(img, s, cancel, lambda m: on_status("scanning", m))
         if cancel.is_set():
             raise Cancelled()
-        src = " ".join(b["text"].strip() for b in blocks if b.get("text", "").strip())
+        name, src = r["name"], r["text"].strip()
         if not src:
+            log.info("VN OCR: nothing read (%s)", r["trace"])
             return []
-        on_status("translating", "Translating…")
+        # what was read goes to the status line, so a wrong read is visible at once
+        on_status("translating", f"Translating… “{src[:48]}{'…' if len(src) > 48 else ''}”")
         if mode == "local_google":
             try:
                 tr = gtranslate.translate([src], s["source_lang"], s["target_lang"], cancel)[0]
@@ -114,9 +117,9 @@ def run_vn(pipeline, client, img: Image.Image, cancel, on_status):
                 if client is None:
                     raise
                 log.warning("%s -> translating with the AI", e)
-                tr = _ai_text(client, src, s, cancel, prev)
+                tr = _ai_text(client, src, s, cancel, prev, name)
         else:
-            tr = _ai_text(client, src, s, cancel, prev)
+            tr = _ai_text(client, src, s, cancel, prev, name)
     if not src.strip() or not tr.strip():
         return []
     if not pipeline.prev_lines or pipeline.prev_lines[-1] != src:
@@ -127,14 +130,15 @@ def run_vn(pipeline, client, img: Image.Image, cancel, on_status):
     return [item]
 
 
-def _ai_text(client, text, s, cancel, context):
+def _ai_text(client, text, s, cancel, context, speaker=""):
     """Text-only translation of one dialogue line (local OCR + AI)."""
     from .translate import LANG_NAMES
     S, T = LANG_NAMES.get(s["source_lang"], s["source_lang"]), s["target_lang"]
     ctx = ("Previous lines (context only):\n" + "\n".join(f"- {l}" for l in context) + "\n\n") if context else ""
     vi = (" Vietnamese pronouns: choose tôi/tao/tớ/mình/anh/em/cậu... from the speakers' relationship and keep them "
           "consistent.") if str(T).lower().startswith("viet") else ""
-    prompt = (f"{ctx}Translate this visual novel dialogue ({S}) into natural spoken {T}. Keep the tone and "
+    who = f"Speaker: {speaker} (do not translate or output the name).\n" if speaker else ""
+    prompt = (f"{ctx}{who}Translate this visual novel dialogue ({S}) into natural spoken {T}. Keep the tone and "
               f"punctuation style, keep it short.{vi} Output ONLY the translation.\n\n{text}")
     raw = client.chat(prompt, temperature=0.3, max_tokens=500, cancel=cancel)
     return re.sub(r"<think>[\s\S]*?</think>", "", raw or "", flags=re.I).strip()
@@ -147,10 +151,16 @@ def _small(shot_img: Image.Image) -> np.ndarray:
     return np.asarray(g, dtype=np.int16)
 
 
-def differs(a, b, pct=0.3) -> bool:
+def differs(a, b, pct=0.3, ignore=None) -> bool:
+    """ignore: boolean mask of pixels that do not count (the translation painted over the frame)."""
     if a is None or b is None or a.shape != b.shape:
         return True
-    return float((np.abs(a - b) > DIFF_LEVEL).mean()) * 100 > pct
+    changed = np.abs(a - b) > DIFF_LEVEL
+    if ignore is not None and ignore.shape == changed.shape:
+        changed = changed[~ignore]
+        if changed.size == 0:
+            return False
+    return float(changed.mean()) * 100 > pct
 
 
 class VNWatcher(threading.Thread):
@@ -169,6 +179,21 @@ class VNWatcher(threading.Thread):
         a, s = self.app, self.app.s
         return s["layout"] == "vn" and bool(s["vn_auto"]) and not a.paused and not a.selecting
 
+    def _overlay_mask(self, reg, shape):
+        """Developer mode: the translation is visible to the screen capture, so the watcher would see it as
+        'text changed'. Returns the mask of the pixels it covers (None while it is not visible, or when
+        the capture cannot see it)."""
+        ov = self.app.overlay
+        if not (ov.visible and ov.rect and not ov.exclude_from_capture):
+            return None
+        m = np.zeros(shape, dtype=bool)
+        sx, sy = shape[1] / max(1, reg[2]), shape[0] / max(1, reg[3])
+        for _tag, (x1, y1, x2, y2), _poly in list(ov._hit):
+            ax, ay = ov.rect[0] - reg[0], ov.rect[1] - reg[1]
+            m[max(0, int(sy * (ay + y1))):max(0, int(sy * (ay + y2)) + 1),
+              max(0, int(sx * (ax + x1))):max(0, int(sx * (ax + x2)) + 1)] = True
+        return m
+
     @staticmethod
     def _game_in_front(reg):
         if not winapi.IS_WIN:
@@ -186,6 +211,8 @@ class VNWatcher(threading.Thread):
             return
         prev = stable_ref = None
         changing, t_change = False, 0.0
+        dropped = False  # a visible translation was removed because the box changed: it must come back
+        painted, ref_painted, ign = False, False, None  # translation visible to the capture (developer mode)
         while True:
             s = self.app.s
             if self._stop_ev.wait(max(0.08, int(s["vn_poll_ms"]) / 1000)):
@@ -193,7 +220,8 @@ class VNWatcher(threading.Thread):
             try:
                 if not self._active():
                     prev = stable_ref = None
-                    changing = False
+                    changing = dropped = painted = ref_painted = False
+                    ign = None
                     continue
                 reg = self.app._region()
                 if not reg or not self._game_in_front(reg):
@@ -203,18 +231,31 @@ class VNWatcher(threading.Thread):
                 shot = sct.grab({"left": int(x), "top": int(y), "width": int(w), "height": int(h)})
                 cur = _small(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
                 now = time.time()
+                mk = self._overlay_mask(reg, cur.shape)
+                if mk is not None:
+                    ign = mk
+                elif not (painted or ref_painted):
+                    ign = None
+                shown = mk is not None
                 if prev is None:            # just switched on: translate what is on screen now
                     changing, t_change = True, now
-                elif differs(cur, prev, pct):    # text is changing: drop the old translation right away
+                elif differs(cur, prev, pct, ign if (shown or painted) else None):  # text is changing: drop the old translation right away
                     if not changing:
+                        dropped = dropped or bool(self.app.overlay.visible or self.app.busy)
                         self.app.q.put(("vn_hide",))
                     changing, t_change = True, now
-                prev = cur
+                prev, painted = cur, shown
                 if changing and now - t_change >= int(s["vn_stable_ms"]) / 1000:
                     changing = False
-                    if stable_ref is None or differs(cur, stable_ref, pct):
-                        stable_ref = cur
+                    if stable_ref is None or differs(cur, stable_ref, pct, ign if (shown or ref_painted) else None):
+                        stable_ref, dropped, ref_painted = cur, False, shown
                         self.app.q.put(("vn_scan",))
+                    elif dropped:
+                        # Same text as before: the translation was only hidden by a passing change (the
+                        # game's mouse-over effect, a blinking arrow). Show the same translation again,
+                        # no new scan and no API call.
+                        dropped = False
+                        self.app.q.put(("vn_restore",))
             except Exception:
                 log.exception("VN watcher tick failed")
                 self._stop_ev.wait(1.0)

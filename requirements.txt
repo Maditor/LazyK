@@ -2,7 +2,9 @@ mss>=9.0
 Pillow>=10.0
 numpy>=1.26,<3
 requests>=2.31
+edge-tts>=7.0  # optional: read the translation aloud
 pynput>=1.7.6
+pystray>=0.19.5
 opencv-python-headless>=4.8
 # Local OCR. rapidocr itself is installed by setup.bat with --no-deps
 # (its own requirement, opencv-python, would clash with opencv-python-headless).

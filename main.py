@@ -4,6 +4,7 @@ Usage:
   python main.py                 normal run (hotkey mode)
   python main.py --demo          calibration boxes, no API calls (checks DPI / capture area)
   python main.py --image p.png   offline test: OCR + translate one image, writes p_translated.png
+  python main.py --tts "xin chào"  test the read-aloud voice (needs internet), then exit
 """
 import argparse
 import logging
@@ -58,16 +59,31 @@ def run_image(path, settings):
     print("Saved", out)
 
 
+def run_tts(text, settings):
+    from app import tts
+    print("Voice:", tts.pick_voice(settings))
+    errors = []
+    sp = tts.Speaker(settings, on_error=errors.append)
+    sp.speak([text])
+    sp.wait()
+    print("Error: " + errors[0] if errors else "Done")
+
+
 def main():
     ap = argparse.ArgumentParser(description="LazyK")
     ap.add_argument("--demo", action="store_true", help="show calibration boxes, no API")
     ap.add_argument("--image", help="translate one image file and save a preview")
+    ap.add_argument("--tts", metavar="TEXT", help="read TEXT aloud with the configured voice, then exit")
     args = ap.parse_args()
 
     fix_streams()
     setup_logging()
     settings = Settings()
     logging.info("Start (settings: %s)", settings.path)
+
+    if args.tts:
+        run_tts(args.tts, settings)
+        return
 
     if args.image:
         if settings.needs_ai() and not settings.has_credentials():

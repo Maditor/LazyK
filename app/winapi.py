@@ -240,17 +240,24 @@ def set_foreground(hwnd):
         pass
 
 
-def make_toolbar_window(hwnd):
+def set_capture_excluded(hwnd, excluded: bool):
+    """Hide a window from every screen capture (OBS, Print Screen, our own OCR) or show it to them."""
+    if not IS_WIN or not hwnd:
+        return
+    try:
+        user32.SetWindowDisplayAffinity(wintypes.HWND(hwnd), WDA_EXCLUDEFROMCAPTURE if excluded else 0)
+    except Exception:
+        pass
+
+
+def make_toolbar_window(hwnd, exclude_from_capture: bool = True):
     """Clickable but never focused (the browser keeps the keyboard), no taskbar entry,
     and invisible to screenshots so it never gets OCR'd."""
     if not IS_WIN or not hwnd:
         return
     style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
     user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-    try:
-        user32.SetWindowDisplayAffinity(wintypes.HWND(hwnd), WDA_EXCLUDEFROMCAPTURE)
-    except Exception:
-        pass
+    set_capture_excluded(hwnd, exclude_from_capture)
 
 
 def point_on_screen(x, y) -> bool:

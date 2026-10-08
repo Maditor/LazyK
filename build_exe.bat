@@ -32,7 +32,9 @@ echo === 2/4 Building (this takes a few minutes) ===
   --add-data "assets;assets" ^
   --hidden-import pynput.keyboard._win32 ^
   --hidden-import pynput.mouse._win32 ^
+  --hidden-import pystray._win32 ^
   --collect-all rapidocr ^
+  --collect-all edge_tts ^
   --collect-binaries onnxruntime ^
   main.py
 if errorlevel 1 (
