@@ -8,14 +8,14 @@
 
 ---
 
-LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, truyện tranh tiếng Anh **ngay trên trình duyệt** mà không cần chờ bản dịch. Bạn cứ cuộn trang như bình thường, LazyK sẽ:
+- LazyK là công cụ cho **Windows** giúp bạn đọc Comics/Webtoon **ngay trên trình duyệt** mà không cần chờ bản dịch. Bạn cứ cuộn trang như bình thường, LazyK sẽ:
 
 1. chụp phần trang truyện đang hiện trên màn hình,
 2. đọc chữ trong các bóng thoại bằng AI (Google Gemini hoặc Cloudflare Workers AI),
 3. dịch cả trang sang **tiếng Việt**,
 4. **tẩy chữ gốc và viết chữ dịch** vào đúng bóng thoại, như một bản scan đã được dịch sẵn.
 
-Không chỉ truyện tranh: LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Đọc to bản dịch](#đọc-to-bản-dịch)).
+- LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Đọc to bản dịch](#đọc-to-bản-dịch)).
 
 > 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. It also translates **visual novels / games with a dialogue box** line by line, can **read the translation aloud** (Edge neural voices, adjustable speed and volume) and keeps a temporary **record of the session's translations**. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
 
