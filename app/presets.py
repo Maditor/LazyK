@@ -18,7 +18,7 @@ KEYS = [
     "font_family", "font_bold", "font_min", "auto_text_size", "overlay_fg", "overlay_bg", "vn_game_colors",
     "overlay_opacity", "overlay_blur", "hover_hide",
     # text to speech
-    "tts_enabled", "tts_speed", "tts_volume", "tts_voice",
+    "tts_enabled", "tts_engine", "tts_speed", "tts_volume", "tts_voice",
 ]
 MAX_NAME = 32
 

@@ -110,6 +110,8 @@ DEFAULTS = {
     "show_status_pill": False,      # the toolbar already shows the status
     # Text to speech (Edge voices)
     "tts_enabled": False,           # read the translation aloud after each translation
+    "tts_engine": "local",          # "local" = Piper on this PC (fast, offline; online for languages without
+                                    # a local voice) or "online" = Microsoft Edge
     "tts_voice": "auto",            # auto = by target_lang, or a voice name such as vi-VN-NamMinhNeural
     "tts_speed": 100,               # % of normal speed (50-200)
     "tts_volume": 100,              # % of the system volume (0-100)

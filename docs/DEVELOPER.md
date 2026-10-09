@@ -333,19 +333,23 @@ but do not shift, so they never trigger. `settings.scroll_watch = false` turns i
 restarts a pynput listener whose thread ended.
 
 
-## Read aloud latency (`app/edge_fast.py`)
+## Read aloud (`app/tts.py`, `app/piper_tts.py`)
 
-edge-tts opens a new secure websocket per piece of text. `EdgeClient` keeps one websocket open on a
-private asyncio loop and sends every SSML request over it (speech.config once per connection,
-audio collected until `turn.end`). `Speaker.prepare()` is called when a scan starts, so the
-connection is ready when the translation arrives; the first chunk is at most 40 characters; the MCI
-mp3 decoder is opened once at warm-up. A reused connection that stays silent for 4 s, or any
-protocol error, triggers one reconnect; `Unsupported` (edge-tts internals changed) switches to plain
-edge-tts for the session.
+`settings.tts_engine` picks the voice:
 
-Streaming playback: with `miniaudio` installed, `Speaker._run_stream` sends the pieces one after another
-over the open connection and writes every mp3 packet into an `Mp3Pipe`; `StreamPlayer` decodes it
-with `miniaudio.stream_any` and feeds a sound device that is opened in `prepare()` (silence while
-idle, closed after 30 s without sound). The voice starts with the first packet instead of after the
-whole piece, file and MCI open. Without miniaudio (or if streaming fails before any sound) the
-file + MCI path is used.
+- `local`: Piper (`piper-tts`, installed by setup.bat with `--no-deps` so it does not add a second
+  onnxruntime next to onnxruntime-directml). Voice models (`piper_<lang>.onnx` + `.onnx.json`, from
+  rhasspy/piper-voices, table `_VOICES` in piper_tts.py; espeak-phonemized languages only) are packs of
+  `local_ocr` (`PACKS["piper_<lang>"]`) and downloads into the same
+  models folder. `piper_tts.ENGINE.sentences()` yields one sentence at a time (espeak-ng and the model
+  behind one lock); each is resampled to 24 kHz and queued in `PcmPlayer` while the next is made.
+- `online`: plain edge-tts, one request per translation (`group_text` joins whole sentences up to 400
+  characters). The free service answers in ~2–3 s and drops reused / pre-opened websockets (an earlier
+  `edge_fast` experiment with kept-open connections was removed), so each piece is downloaded completely,
+  decoded with miniaudio and queued: later start, no stutter. Pieces are fetched WINDOW ahead.
+
+`PcmPlayer` (miniaudio) plays queued int16 blocks back to back; the device stays open (silence) for
+5 minutes. `speak()`/`stop()` clear the queue; a stopped reading cannot queue more (push checks `stop`).
+Without miniaudio, mp3 / wav files are played through MCI. A missing local voice falls back to online and `Speaker.on_need_local` (= `App.setup_local_voice`)
+starts pip-installing Piper (source runs only) and downloading the voice in the background; the same
+happens when Text to speech is switched on, the target language changes, or at start-up.

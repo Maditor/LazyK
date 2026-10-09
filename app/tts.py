@@ -1,7 +1,8 @@
 """Text to speech: read the translation aloud (optional, off by default).
 
-Voices come from Microsoft Edge's online neural voices through the `edge-tts` package (free, no key).
-Playback uses the Windows MCI API through ctypes, so no audio library is needed.
+Two voices: Piper on this PC (piper_tts.py, fast and steady) or Microsoft Edge's online neural voices
+through the `edge-tts` package (free, no key, nicer but slow to answer). Sound goes out through miniaudio
+(gapless), or the Windows MCI API when miniaudio is missing.
 
 Everything here is best effort: a missing package, no network or no sound device only logs a warning and
 (once) shows a short message. It never raises into the caller, so translation keeps working.
@@ -9,7 +10,6 @@ Everything here is best effort: a missing package, no network or no sound device
 import asyncio
 import logging
 import os
-import queue
 import re
 import sys
 import tempfile
@@ -95,50 +95,18 @@ class McPlayer:
             self._send(f"close {self.ALIAS}")
 
 
-# ---------------------------------------------------------------- streaming playback (miniaudio)
+# ---------------------------------------------------------------- gapless playback (miniaudio)
 try:
     import miniaudio as _ma
-    _Source = _ma.StreamableSource
-except Exception:  # noqa: BLE001  (not installed: StreamPlayer is not used)
-    _ma, _Source = None, object
+except Exception:  # noqa: BLE001  (not installed: the Windows MCI player is used)
+    _ma = None
 
 
-class Mp3Pipe(_Source):
-    """mp3 bytes flowing from the network to the decoder. read() waits for data instead of ending."""
-
-    def __init__(self, stop: threading.Event):
-        self.stop = stop
-        self._buf = bytearray()
-        self._cond = threading.Condition()
-        self._done = False
-
-    def write(self, data: bytes):
-        with self._cond:
-            self._buf += data
-            self._cond.notify_all()
-
-    def finish(self):
-        with self._cond:
-            self._done = True
-            self._cond.notify_all()
-
-    def read(self, n: int) -> bytes:
-        with self._cond:
-            while not self._buf and not self._done and not self.stop.is_set():
-                self._cond.wait(0.05)
-            if self.stop.is_set():
-                return b""
-            out = bytes(self._buf[:n])
-            del self._buf[:n]
-            return out
-
-
-class StreamPlayer:
-    """Plays mp3 while it is still downloading: the voice starts with the first audio packet, and the
-    pieces of one reading follow each other without a gap. The sound device stays open between readings
-    (silence) and closes after IDLE_S without sound."""
-    RATE = 24000   # Edge voices: 24 kHz mono
-    IDLE_S = 30
+class PcmPlayer:
+    """Plays 16-bit mono sound blocks back to back without gaps. The sound device stays open between
+    readings (silence) and closes after IDLE_S without sound, so a reading starts without delay."""
+    RATE = 24000
+    IDLE_S = 300
 
     def __init__(self):
         if _ma is None:
@@ -171,18 +139,20 @@ class StreamPlayer:
             need = yield out.tobytes()
 
     def open(self):
-        """Start the sound device now (a reading is coming), so the first sound is not delayed."""
         with self._lock:
             if self._dev is not None:
                 self._last_sound = max(self._last_sound, time.time())
                 return
         ma = self._ma
         dev = ma.PlaybackDevice(output_format=ma.SampleFormat.SIGNED16, nchannels=1, sample_rate=self.RATE,
-                                buffersize_msec=60, app_name="LazyK")
+                                buffersize_msec=80, app_name="LazyK")
         g = self._gen()
         next(g)
         dev.start(g)
         with self._lock:
+            if self._dev is not None:  # opened by another thread meanwhile
+                dev.close()
+                return
             self._dev = dev
             self._last_sound = time.time()
         if self._watch is None or not self._watch.is_alive():
@@ -204,72 +174,65 @@ class StreamPlayer:
                 pass
             return
 
-    def play_stream(self, pipe: Mp3Pipe, stop: threading.Event, volume: int = 100):
-        """Decode `pipe` and play it; returns when everything was heard or `stop` is set."""
+    def push(self, samples, rate, volume=100, stop=None):
+        """Queue int16 samples (any rate: converted to RATE). Nothing is queued once `stop` is set."""
         import numpy as np
-        self.open()
-        ma = self._ma
+        if not len(samples):
+            return
+        if rate != self.RATE:
+            from .piper_tts import resample
+            samples = resample(samples, rate, self.RATE)
         gain = max(0, min(100, int(volume))) / 100.0
-        gen = ma.stream_any(pipe, source_format=ma.FileFormat.MP3, output_format=ma.SampleFormat.SIGNED16,
-                            nchannels=1, sample_rate=self.RATE, frames_to_read=1024)
-        try:
-            frames = next(gen)
-            while not stop.is_set():
-                if len(frames):
-                    blk = np.frombuffer(frames, dtype=np.int16)
-                    if gain < 0.999:
-                        blk = (blk.astype(np.float32) * gain).astype(np.int16)
-                    with self._lock:
-                        self._pcm.append(blk.copy())
-                frames = gen.send(1024)
-        except StopIteration:
-            pass
-        finally:
-            gen.close()
-        # let the device play what is queued
+        if gain < 0.999:
+            samples = (samples.astype(np.float32) * gain).astype(np.int16)
+        self.open()
+        with self._lock:
+            if stop is None or not stop.is_set():
+                self._pcm.append(np.ascontiguousarray(samples, dtype=np.int16))
+
+    def clear(self):
+        with self._lock:
+            self._pcm.clear()
+
+    def drain(self, stop: threading.Event):
+        """Wait until everything queued was heard, or `stop` (whoever stops also clears the queue)."""
         while not stop.is_set():
             with self._lock:
                 if not self._pcm:
                     break
             time.sleep(0.03)
-        if stop.is_set():
-            with self._lock:
-                self._pcm.clear()
-        time.sleep(0.08)  # the device's own short buffer
+        if not stop.is_set():
+            time.sleep(0.1)  # the device's own short buffer
 
 
-# ---------------------------------------------------------------- the speaker
+def decode_mp3(path):
+    """mp3 file -> int16 numpy samples at PcmPlayer.RATE."""
+    import numpy as np
+    d = _ma.decode_file(path, output_format=_ma.SampleFormat.SIGNED16, nchannels=1,
+                        sample_rate=PcmPlayer.RATE)
+    return np.frombuffer(d.samples.tobytes(), dtype=np.int16)
+
+
+# ---------------------------------------------------------------- online voice (Microsoft Edge)
 async def _synth(text, voice, rate, path):
     import edge_tts
     await edge_tts.Communicate(text, voice, rate=rate).save(path)
 
 
-_FAST = {"ok": True}
-
-
 def synth_to_file(text, voice, rate, path):
-    """Over the kept-open connection (edge_fast) when possible: much shorter wait before each piece.
-    Plain edge-tts (a new connection per piece) when that is not possible."""
-    if _FAST["ok"]:
-        from . import edge_fast
-        try:
-            return edge_fast.CLIENT.synth(text, voice, rate, path)
-        except edge_fast.Unsupported as e:
-            _FAST["ok"] = False
-            log.info("TTS: fast connection not available with this edge-tts (%s)", e)
-        except Exception as e:  # noqa: BLE001
-            try:
-                from edge_tts.exceptions import NoAudioReceived
-                if isinstance(e, NoAudioReceived):
-                    raise
-            except ImportError:
-                pass
-            log.info("TTS: fast connection failed (%s: %s), using plain edge-tts", type(e).__name__, e)
-    asyncio.run(_synth(text, voice, rate, path))
+    """One piece of text -> mp3 file. A network hiccup is retried once."""
+    from edge_tts.exceptions import NoAudioReceived
+    try:
+        asyncio.run(_synth(text, voice, rate, path))
+    except NoAudioReceived:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.info("TTS: online request failed (%s: %s), trying again", type(e).__name__, e)
+        asyncio.run(_synth(text, voice, rate, path))
 
 
-_QUOTES = {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-",
-           "\u2026": "...", "\u00a0": " "}
+_QUOTES = {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-",
+           "…": "...", " ": " "}
 
 
 def sanitize(text: str) -> str:
@@ -289,10 +252,7 @@ def split_sentences(text: str) -> list:
 def synth_robust(text, voice, rate, path):
     """Like synth_to_file, but when the service answers "no audio" (it does that for some texts and
     sometimes at random) retry with cleaned text, then sentence by sentence."""
-    try:
-        from edge_tts.exceptions import NoAudioReceived
-    except ImportError:
-        raise
+    from edge_tts.exceptions import NoAudioReceived
     try:
         return synth_to_file(text, voice, rate, path)
     except NoAudioReceived as e:
@@ -340,19 +300,24 @@ def _cut(text: str, limit: int):
     return text[:k + 1].strip(), text[k + 1:].strip()
 
 
-def chunk_text(text: str, first_max: int = 40, max_len: int = 160) -> list:
-    """Short pieces to synthesise and play one after another. The first piece is small, so the voice
-    starts quickly; the rest is synthesised while it plays."""
-    pieces = []
+def group_text(text: str, max_len: int = 400) -> list:
+    """Whole sentences joined into pieces of up to max_len characters: one request per piece, so the
+    voice keeps its natural flow and there are few waits between pieces."""
+    pieces, cur = [], ""
     for sent in split_sentences(text) or [text]:
         while len(sent) > max_len:
             head, sent = _cut(sent, max_len)
+            if cur:
+                pieces.append(cur)
+                cur = ""
             pieces.append(head)
-        if sent:
-            pieces.append(sent)
-    if pieces and len(pieces[0]) > first_max:
-        head, tail = _cut(pieces[0], first_max)
-        pieces[0:1] = [p for p in (head, tail) if p]
+        if cur and len(cur) + 1 + len(sent) > max_len:
+            pieces.append(cur)
+            cur = sent
+        else:
+            cur = f"{cur} {sent}".strip()
+    if cur:
+        pieces.append(cur)
     return [p for p in pieces if _HAS_SPEECH.search(p)]
 
 
@@ -383,79 +348,99 @@ def sample_text(settings) -> str:
     return SAMPLES.get(pick_voice(settings)[:2].lower(), SAMPLES["en"])
 
 
-WINDOW = 3  # chunks synthesised ahead of the one being played
+WINDOW = 3  # online pieces requested ahead of the one being played
 
 
 class Speaker:
-    """speak(items) replaces whatever is being read; stop() cuts it off at once (within ~40 ms).
+    """speak(items) replaces whatever is being read; stop() cuts it off at once.
 
-    Each translation is cut into short chunks. The first one is small so the voice starts quickly, and the
-    next WINDOW chunks are synthesised in parallel while one plays. `on_error(message)` is called (at most
-    once per speak) from the worker thread when nothing at all could be read."""
+    Two voices (settings "tts_engine"):
+    - "local": Piper on this PC. Starts in a few hundred ms, no internet, same speed every time.
+    - "online": Microsoft Edge voices. Nicer, but the service takes a few seconds per request, so each
+      translation is asked in one piece and played only once it is complete: a later start, no stutter.
+    `on_error(message)` is called (at most once per speak) when nothing at all could be read."""
 
-    def __init__(self, settings, on_error=None, player=None, synth=synth_robust):
+    def __init__(self, settings, on_error=None, player=None, synth=synth_robust, on_need_local=None):
         self.s = settings
         self.on_error = on_error
+        self.on_need_local = on_need_local  # starts installing / downloading the local voice
         self.player = player or McPlayer()
-        self.streamer = None
+        self.pcm = None
         if player is None:
             try:
-                self.streamer = StreamPlayer()  # plays while downloading (miniaudio)
+                self.pcm = PcmPlayer()
             except Exception as e:  # noqa: BLE001
-                log.info("TTS: streaming playback not available (%s), using the Windows player", e)
+                log.info("TTS: gapless playback not available (%s), using the Windows player", e)
         self.synth = synth
         self._lock = threading.Lock()
         self._gen = 0
         self._stop = threading.Event()
         self._tmp = None
         self._thread = None
-        self._warmed = False
+        self._warmed = set()
+        self._told = set()
 
     # -- public
+    def engine(self) -> str:
+        return "local" if str(self.s["tts_engine"]).lower() == "local" else "online"
+
+    def _lang(self):
+        return pick_voice(self.s)[:2].lower()
+
+    def local_usable(self) -> bool:
+        from . import piper_tts
+        return self.engine() == "local" and piper_tts.ready(self._lang()) and piper_tts.installed()
+
     def warm(self):
-        """Load edge-tts and open a first connection in the background, so the first reading is not slow."""
-        if self._warmed:
+        """Get the chosen voice ready in the background, so the first reading is not slow."""
+        key = (self.engine(), self._lang())
+        if key in self._warmed:
             return
-        self._warmed = True
+        self._warmed.add(key)
 
         def work():
             from . import winapi
             winapi.lower_this_thread()
             try:
-                import edge_tts  # noqa: F401  (the first import takes a second or two)
-                path = os.path.join(self._tmpdir(), "warm.mp3")
-                self.synth("Xin chào.", pick_voice(self.s), "+0%", path)
-                self.player.warm(path)  # the first audio open is slow: do it now, silently
-                os.remove(path)
+                if self.local_usable():
+                    from . import piper_tts
+                    piper_tts.ENGINE.warm(self._lang())
+                else:
+                    import edge_tts  # noqa: F401  (the first import takes a second or two)
+                if self.pcm is not None:
+                    self.pcm.open()
             except Exception as e:  # noqa: BLE001
                 log.info("TTS warm-up skipped: %s", e)
         threading.Thread(target=work, daemon=True).start()
 
     def prepare(self):
-        """A translation is on its way: open the voice connection and the sound device now."""
+        """A translation is on its way: have the voice and the sound device ready."""
+        self.warm()
+        if self.pcm is not None:
+            threading.Thread(target=self._open_pcm, daemon=True).start()
+
+    def _open_pcm(self):
         try:
-            from . import edge_fast
-            if _FAST["ok"]:
-                edge_fast.CLIENT.prepare()
-            if self.streamer is not None:
-                threading.Thread(target=self.streamer.open, daemon=True).start()
+            self.pcm.open()
         except Exception:  # noqa: BLE001
-            log.debug("TTS prepare failed", exc_info=True)
+            log.debug("TTS: sound device not opened", exc_info=True)
 
     def speak(self, items_or_texts):
         try:
             texts = [t for t in items_or_texts if isinstance(t, str)] if items_or_texts and \
                 isinstance(items_or_texts[0], str) else clean_texts(items_or_texts)
-            chunks = [c for t in texts for c in chunk_text(t)]
-            if not chunks:
+            texts = [" ".join(t.split()) for t in texts if t and _HAS_SPEECH.search(t)]
+            if not texts:
                 return
             with self._lock:
                 self._gen += 1
                 gen = self._gen
                 self._stop.set()           # cut the previous reading
                 self._stop = stop = threading.Event()
-            self._thread = threading.Thread(target=self._run, args=(gen, stop, chunks, pick_voice(self.s)),
-                                            daemon=True)
+            if self.pcm is not None:
+                self.pcm.clear()
+            self._thread = threading.Thread(target=self._run, args=(gen, stop, texts, pick_voice(self.s)),
+                                            daemon=True, name="tts")
             self._thread.start()
         except Exception:
             log.exception("TTS speak failed")
@@ -471,6 +456,8 @@ class Speaker:
             with self._lock:
                 self._gen += 1
                 self._stop.set()
+            if self.pcm is not None:
+                self.pcm.clear()
         except Exception:
             log.exception("TTS stop failed")
 
@@ -486,78 +473,87 @@ class Speaker:
     def _current(self, gen):
         return gen == self._gen
 
-    def _run(self, gen, stop, chunks, voice):
-        if self.streamer is not None and _FAST["ok"]:
-            try:
-                if self._run_stream(gen, stop, chunks, voice):
-                    return
-            except Exception as e:  # noqa: BLE001
-                log.info("TTS: streaming failed (%s: %s), using files", type(e).__name__, e)
-            if stop.is_set() or not self._current(gen):
-                return
-        self._run_files(gen, stop, chunks, voice)
-
-    def _run_stream(self, gen, stop, chunks, voice) -> bool:
-        """Fetch the pieces one after another over the open connection and play the audio as it comes.
-        False = nothing could be streamed (the caller falls back to the file way)."""
-        from . import edge_fast
-        from edge_tts.exceptions import NoAudioReceived
-        pipe = Mp3Pipe(stop)
-        t0 = time.time()
-        first = {}
-        got = {"n": 0}
-
-        def on_audio(data):
-            if not first:
-                first["t"] = time.time() - t0
-            got["n"] += len(data)
-            pipe.write(data)
-
-        player = threading.Thread(target=self.streamer.play_stream, args=(pipe, stop, volume_pct(self.s)),
-                                  daemon=True, name="tts-play")
-        player.start()
-        try:
-            for i, text in enumerate(chunks):
-                if stop.is_set() or not self._current(gen):
-                    return True
-                rate = self._rate()
+    def _tell_once(self, key, msg):
+        if key not in self._told:
+            self._told.add(key)
+            if self.on_error:
                 try:
-                    edge_fast.CLIENT.stream(text, voice, rate, on_audio)
-                except NoAudioReceived:
-                    pass_no_audio = True
-                except Exception:
-                    if got["n"]:  # part of the reading was heard: stop here rather than start over
-                        log.warning("TTS: connection lost in the middle of a reading", exc_info=True)
-                        break
-                    raise
-                else:
-                    pass_no_audio = False
-                if pass_no_audio:
-                    clean = sanitize(text)
-                    try:
-                        if clean and clean != text and _HAS_SPEECH.search(clean):
-                            edge_fast.CLIENT.stream(clean, voice, rate, on_audio)
-                        else:
-                            raise NoAudioReceived("no audio")
-                    except NoAudioReceived:
-                        log.warning("TTS: skipped a piece the service would not read: %r", text[:120])
-                if i == 0 and first:
-                    log.info("TTS: first sound after %.2fs", first["t"])
-        finally:
-            pipe.finish()
-        if not got["n"]:
-            stop_now = threading.Event()
-            pipe.stop = stop_now
-            stop_now.set()
-            player.join(1)
-            return False
-        player.join()
-        return True
+                    self.on_error(msg)
+                except Exception:  # noqa: BLE001
+                    log.exception("TTS on_error failed")
 
-    def _run_files(self, gen, stop, chunks, voice):
+    def _run(self, gen, stop, texts, voice):
+        if self.engine() == "local":
+            from . import piper_tts
+            lang = voice[:2].lower()
+            if not piper_tts.voice_for(lang):
+                log.info("TTS: no local voice for '%s', using the online voice", lang)
+            elif not piper_tts.installed() or not piper_tts.ready(lang):
+                log.info("TTS: local voice not ready yet (Piper installed: %s, voice downloaded: %s): "
+                         "online voice meanwhile", piper_tts.installed(), piper_tts.ready(lang))
+                if self.on_need_local is not None:
+                    try:
+                        self.on_need_local()
+                    except Exception:  # noqa: BLE001
+                        log.exception("TTS: local voice setup could not start")
+                else:
+                    self._tell_once("dl", "Local voice not set up: Settings → Text to speech → Local voice")
+            else:
+                try:
+                    self._run_local(gen, stop, texts, lang)
+                    return
+                except Exception as e:  # noqa: BLE001
+                    log.warning("TTS: local voice failed (%s: %s), using the online voice", type(e).__name__, e,
+                                exc_info=True)
+                if stop.is_set() or not self._current(gen):
+                    return
+        self._run_online(gen, stop, texts, voice)
+
+    # -- local (Piper)
+    def _run_local(self, gen, stop, texts, lang):
+        from . import piper_tts
+        t0 = time.time()
+        first = True
+        speed, vol = speed_pct(self.s), volume_pct(self.s)
+        # The voice is made a sentence at a time: a long first sentence is cut at a comma so the first
+        # sound comes sooner (the rest is made while it plays, with no gap).
+        sents = split_sentences(texts[0]) or [texts[0]]
+        if len(sents[0]) > 90:
+            head, tail = _cut(sents[0], 60)
+            texts = [head, " ".join([tail] + sents[1:])] + list(texts[1:])
+        for text in texts:
+            parts = []
+            for samples, rate in piper_tts.ENGINE.sentences(text, lang, speed):
+                if stop.is_set() or not self._current(gen):
+                    return
+                if first:
+                    log.info("TTS: first sound after %.2fs (local)", time.time() - t0)
+                    first = False
+                if self.pcm is not None:
+                    self.pcm.push(samples, rate, vol, stop)
+                else:
+                    parts.append((samples, rate))
+            if parts:  # no gapless player: one wav per translation, played by Windows
+                import numpy as np
+                path = os.path.join(self._tmpdir(), f"{gen}_local.wav")
+                piper_tts.write_wav(path, np.concatenate([p for p, _ in parts]), parts[0][1])
+                try:
+                    self.player.play(path, stop, vol)
+                finally:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        if self.pcm is not None:
+            self.pcm.drain(stop)
+
+    # -- online (Edge)
+    def _run_online(self, gen, stop, texts, voice):
+        chunks = [c for t in texts for c in group_text(t)]
         files, jobs = [], {}
         played = 0
         last_err = None
+        t0 = time.time()
         try:
             def start(i):
                 if i >= len(chunks) or i in jobs:
@@ -565,7 +561,7 @@ class Speaker:
                 path = os.path.join(self._tmpdir(), f"{gen}_{i}.mp3")
                 files.append(path)
                 box = {}
-                rate = self._rate()  # the speed set now is used for chunks synthesised from now on
+                rate = self._rate()
 
                 def work():
                     try:
@@ -582,7 +578,8 @@ class Speaker:
             for i in range(len(chunks)):
                 start(i + WINDOW)
                 path, th, box = jobs.pop(i)
-                th.join()
+                while th.is_alive() and not stop.is_set():
+                    th.join(0.05)
                 if stop.is_set() or not self._current(gen):
                     return
                 if "err" in box:
@@ -591,10 +588,21 @@ class Speaker:
                     last_err = box["err"]
                     log.warning("TTS: skipped a piece (%s): %r", box["err"], chunks[i][:120])
                     continue
-                self.player.play(path, stop, volume_pct(self.s))
+                if not played:
+                    log.info("TTS: first sound after %.2fs (online)", time.time() - t0)
+                if self.pcm is not None:
+                    try:
+                        self.pcm.push(decode_mp3(path), PcmPlayer.RATE, volume_pct(self.s), stop)
+                    except Exception as e:  # noqa: BLE001
+                        log.info("TTS: gapless playback failed (%s), using the Windows player", e)
+                        self.pcm = None
+                if self.pcm is None:
+                    self.player.play(path, stop, volume_pct(self.s))
                 played += 1
                 if stop.is_set() or not self._current(gen):
                     return
+            if self.pcm is not None and played:
+                self.pcm.drain(stop)
             if not played and last_err:
                 raise last_err
         except ImportError:

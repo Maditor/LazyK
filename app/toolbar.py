@@ -523,7 +523,21 @@ class Toolbar:
             return rows
 
         def speech():
+            from . import piper_tts, tts
+            local = str(s["tts_engine"]).lower() == "local"
+            lang = tts.pick_voice(s)[:2].lower()
+            pv = piper_tts.voice_for(lang)
+            if not pv:
+                note = "online for this language"
+            elif piper_tts.ready(lang):
+                note = "fast · offline"
+            else:
+                note = f"download {pv[2]}"
             return [("item", "Read the translation aloud", bool(s["tts_enabled"]), a.toggle_tts, None),
+                    ("sep",),
+                    ("item", "Local voice", local, lambda: a.set_tts_engine("local"), note),
+                    ("item", "Online voice", not local, lambda: a.set_tts_engine("online"), "nicer · slower"),
+                    ("sep",),
                     ("entry", "Speed", s["tts_speed"], a.set_tts_speed, "%"),
                     ("entry", "Volume", s["tts_volume"], a.set_tts_volume, "%"),
                     ("item", "Test voice", False, a.test_tts, None)]

@@ -42,7 +42,9 @@ class App:
         self.pipeline = Pipeline(settings)
         self.q = queue.Queue()
         self.record = Record(settings)
-        self.tts = Speaker(settings, on_error=lambda m: self.q.put(("toast", "error", m, 4000)))
+        self._voice_lock, self._voice_dl = threading.Lock(), False
+        self.tts = Speaker(settings, on_error=lambda m: self.q.put(("toast", "error", m, 4000)),
+                           on_need_local=self.setup_local_voice)
         from . import local_ocr
         local_ocr.GPU_ID = max(0, int(settings["local_gpu_id"] or 0))
         # Warm-ups (OCR models, Google, voice, graphics card list) run one after another, at low
@@ -107,6 +109,8 @@ class App:
             steps.append((3500, gtranslate.warm))
         if s["tts_enabled"]:
             steps.append((5000, self.tts.warm))
+            if str(s["tts_engine"]).lower() == "local":
+                steps.append((6000, self.setup_local_voice))  # nothing to do when it is already there
         # the graphics card list is only for the OCR device menu: read it late (or when that menu opens)
         steps.append((15000, lambda: gpus.load(on_done=lambda: self.q.put(("gpus",)))))
         for ms, fn in steps:
@@ -231,6 +235,11 @@ class App:
             if gen == self.gen:
                 self._status(state, text)
             self.toolbar.refresh()  # model / server may have been switched automatically
+        elif kind == "refresh_menu":
+            self.toolbar.refresh_menu()
+        elif kind == "vtoast":  # local voice setup: shown even while a page is being translated
+            _, state, text, ms = ev
+            self._status(state, text, auto_hide=ms)
         elif kind == "gpus":
             self.toolbar.refresh_menu()  # the OCR device list just arrived
         elif kind == "toast":
@@ -254,6 +263,8 @@ class App:
                 hint = local_ocr.ENGINE.hint if self.s["ocr_engine"] == "local" else ""
                 self._status("error" if hint else "info", hint or "No text found", auto_hide=6000 if hint else 2500)
                 return
+            if self.s["tts_enabled"] and not cached:  # a page coming back from the cache is not read again
+                self.tts.speak(items)  # before drawing: the voice request goes out a little sooner
             self.overlay.show_items(rect, items, dpi)
             t0 = getattr(self, "_vn_t0", None)
             if self.s["layout"] == "vn" and t0:
@@ -264,8 +275,6 @@ class App:
             self.last = (rect, items, dpi)
             if not cached:
                 self.record.add(items)
-            if self.s["tts_enabled"] and not cached:  # a page coming back from the cache is not read again
-                self.tts.speak(items)
             n = sum(1 for it in items if it.get("translation"))
             if self.s["ocr_engine"] == "local" and not cached:
                 from . import local_ocr
@@ -544,6 +553,8 @@ class App:
             self.pipeline.prev_lines = []  # context lines were in the other language's story
         self.toolbar.refresh()
         self._status("info", "Translate to: " + langs.target(name)[1], auto_hide=1800)
+        if self.s["tts_enabled"] and str(self.s["tts_engine"]).lower() == "local":
+            self.setup_local_voice()  # the new language's local voice, if there is one and it is missing
 
     def set_source_lang(self, code):
         names = {"auto": "Auto detect", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "en": "English"}
@@ -785,10 +796,80 @@ class App:
     def toggle_tts(self):
         self.s.update(tts_enabled=not self.s["tts_enabled"])
         if self.s["tts_enabled"]:
+            if str(self.s["tts_engine"]).lower() == "local":
+                self.setup_local_voice()  # first time: installs / downloads it now, not at the first line
             self.tts.warm()
         else:
             self.tts.stop()
         self.toolbar.refresh()
+
+    def set_tts_engine(self, engine):
+        """Settings → Text to speech → Local voice / Online voice."""
+        from . import tts
+        log.info("TTS: voice set to %s", engine)
+        self.s.update(tts_engine=engine)
+        self.toolbar.refresh()
+        if engine != "local":
+            self.tts.warm()
+            self._status("info", "Voice: online (Microsoft)", auto_hide=1800)
+            return
+        if self.setup_local_voice(sample=True) == "ready":
+            self.tts.warm()
+            self.tts.speak([tts.sample_text(self.s)])
+
+    def setup_local_voice(self, sample=False):
+        """Install Piper and download the voice of the target language when missing (in the background).
+        Returns "ready", "busy" (being set up), "started" or "none" (no local voice possible).
+        Thread-safe: also called by the speaker when it finds the local voice missing."""
+        from . import local_ocr, piper_tts, tts
+        lang = tts.pick_voice(self.s)[:2].lower()
+        v = piper_tts.voice_for(lang)
+        if not v:
+            if sample:  # chosen by hand: say why it will sound different
+                self.q.put(("vtoast", "info", "No local voice for this language: the online voice is used", 4000))
+            return "none"
+        inst, have = piper_tts.installed(), piper_tts.ready(lang)
+        if inst and have:
+            return "ready"
+        with self._voice_lock:
+            if self._voice_dl:
+                return "busy"
+            if not inst and not piper_tts.can_install():
+                log.warning("TTS: this exe was built without Piper")
+                self.q.put(("vtoast", "error", "This build has no local voice (rebuild the exe with build_exe.bat)", 8000))
+                return "none"
+            self._voice_dl = True
+        log.info("TTS: setting up the local voice (Piper installed: %s, voice downloaded: %s)", inst, have)
+        last = [-1]
+
+        def progress(fr, _text):
+            pct = int(fr * 100)
+            if pct != last[0]:
+                last[0] = pct
+                self.q.put(("vtoast", "scanning", f"Downloading the local voice · {pct}%", None))
+
+        def run():
+            try:
+                if not piper_tts.installed():
+                    self.q.put(("vtoast", "scanning", "Installing Piper (local voice engine)", None))
+                    piper_tts.install()
+                if not piper_tts.ready(lang):
+                    self.q.put(("vtoast", "scanning", f"Downloading the local voice ({v[2]})", None))
+                    local_ocr.download_pack(v[0], progress)
+                    log.info("TTS: local voice downloaded to %s", local_ocr.models_dir())
+                ok, msg = True, "Local voice ready"
+            except Exception as e:  # noqa: BLE001
+                log.warning("TTS: local voice setup failed: %s", e, exc_info=True)
+                ok, msg = False, f"Local voice setup failed: {str(e)[:90]}"
+            self._voice_dl = False
+            self.q.put(("vtoast", "ready" if ok else "error", msg, 2500 if ok else 10000))
+            self.q.put(("refresh_menu",))
+            if ok:
+                self.tts.warm()
+                if sample:
+                    self.tts.speak([tts.sample_text(self.s)])
+        threading.Thread(target=run, daemon=True, name="voice-setup").start()
+        return "started"
 
     def set_tts_speed(self, text):
         """Typed in Settings → Text to speech → Speed (50-200 %). Plays a short sample."""

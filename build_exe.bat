@@ -24,6 +24,8 @@ if exist "%OUT%\settings.json" copy /y "%OUT%\settings.json" "%TEMP%\lazyk_setti
 
 echo === 1/4 Installing PyInstaller ===
 %PY% -m pip install -q pyinstaller
+rem Local voice engine: always in the exe (users of the exe cannot pip-install it)
+%PY% -m pip install -q --no-deps piper-tts==1.8.0 pathvalidate
 
 echo === 2/4 Building (this takes a few minutes) ===
 %PY% -m PyInstaller --noconfirm --clean --windowed --onedir ^
@@ -37,6 +39,9 @@ echo === 2/4 Building (this takes a few minutes) ===
   --collect-all rapidocr ^
   --hidden-import _miniaudio ^
   --collect-all edge_tts ^
+  --collect-data piper ^
+  --collect-binaries piper ^
+  --hidden-import piper.espeakbridge ^
   --collect-binaries onnxruntime ^
   main.py
 if errorlevel 1 (

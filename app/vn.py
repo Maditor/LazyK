@@ -248,6 +248,8 @@ class VNWatcher(threading.Thread):
                         if s.read_mode() == "local_google":
                             from . import gtranslate
                             gtranslate.prewarm(10)  # the connection is ready when this line is read
+                        if s["tts_enabled"]:
+                            self.app.tts.prepare()  # voice connection + sound device ready too
                     changing, t_change = True, now
                 prev, painted = cur, shown
                 stable_ms = int(s["vn_stable_ms"])

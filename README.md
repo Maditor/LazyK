@@ -17,7 +17,7 @@ LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, t
 
 Không chỉ truyện tranh: LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Text to speech](#text-to-speech)).
 
-> 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. It also translates **visual novels / games with a dialogue box** line by line, can **read the translation aloud** (Edge neural voices, adjustable speed and volume) and keeps a temporary **record of the session's translations**. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
+> 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. It also translates **visual novels / games with a dialogue box** line by line, can **read the translation aloud** (a local Piper voice or Edge online voices, adjustable speed and volume) and keeps a temporary **record of the session's translations**. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
 
 ## ✨ Tính năng
 
@@ -31,7 +31,7 @@ Không chỉ truyện tranh: LazyK còn dịch **visual novel và game có hộp
 - **Thanh công cụ nhỏ luôn nổi trên cùng**, chọn được font chữ có sẵn trong Windows.
 - Lớp dịch **hiện được trong ảnh chụp màn hình** (Print Screen, Snipping Tool).
 - **Chế độ Visual novel**: dịch từng dòng thoại của game trong một khung nhỏ do bạn chọn, tự quét khi chữ đổi (tuỳ chọn), bản dịch phủ lên hộp thoại với màu của chính hộp thoại.
-- **Đọc to bản dịch** (tuỳ chọn, mặc định tắt): dịch xong là đọc luôn bằng giọng Microsoft Edge, chỉnh được **tốc độ** và **âm lượng**, cuộn trang là dừng.
+- **Đọc to bản dịch** (tuỳ chọn, mặc định tắt): dịch xong là đọc luôn bằng giọng chạy trên máy (Piper) hoặc giọng online của Microsoft Edge, chỉnh được **tốc độ** và **âm lượng**, cuộn trang là dừng.
 - **Bản ghi dịch tạm**: phần đã dịch của phiên làm việc được ghi vào `record-lazyk.txt` để xem lại, tự xoá khi thoát LazyK.
 
 ## 📋 Yêu cầu
@@ -197,21 +197,43 @@ Chọn **ai đọc, ai dịch** (AI / Local OCR / Google), server, model và thi
 
 ### Text to speech
 
-Bật ở ⚙ → **Text to speech** → *Read the translation aloud* (mặc định **tắt**). Sau khi dịch xong, LazyK đọc các bóng thoại theo thứ tự đọc bằng giọng thần kinh của Microsoft Edge (miễn phí, không cần API key).
+Bật ở ⚙ → **Text to speech** → *Read the translation aloud* (mặc định **tắt**). Sau khi dịch xong, LazyK đọc các bóng thoại theo thứ tự đọc. Có hai giọng:
+
+| Giọng | Ưu điểm | Nhược điểm |
+|---|---|---|
+| **Local voice** (Piper, chạy trên máy) — **mặc định** | Bắt đầu đọc gần như ngay lập tức (thường 0,03–0,2 giây), lần nào cũng như nhau, không cần mạng, không gửi chữ đi đâu | Giọng kém tự nhiên hơn giọng online. Mỗi ngôn ngữ tải một lần khoảng 60–75 MB |
+| **Online voice** (Microsoft Edge) | Giọng tự nhiên hơn, có cho mọi ngôn ngữ đích | Dịch vụ miễn phí trả tiếng chậm (thường 2–9 giây) và hay chập chờn. Mỗi bản dịch được tải trọn vẹn rồi mới đọc, nên bắt đầu muộn nhưng không bị ngắt giữa câu |
+
+**Ngôn ngữ có giọng local** (giọng Piper "medium" từ [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)):
+
+| Ngôn ngữ đích | Giọng | Dung lượng |
+|---|---|---|
+| Tiếng Việt | `vi_VN-vais1000` | 63 MB |
+| English | `en_US-lessac` | 63 MB |
+| 한국어 | `ko_KR-kss` | ~65 MB |
+| Bahasa Indonesia | `id_ID-news_tts` | ~65 MB |
+| Español | `es_ES-davefx` | ~65 MB |
+| Français | `fr_FR-siwis` | ~65 MB |
+| Deutsch | `de_DE-thorsten` | 63 MB |
+| Português | `pt_BR-faber` | ~65 MB |
+| Русский | `ru_RU-irina` | ~65 MB |
+
+Tiếng **Nhật, Trung và Thái** chưa có giọng local (Piper cần thêm thư viện tách từ riêng cho các tiếng này), nên dù chọn *Local voice* LazyK vẫn tự dùng giọng online.
+
+**Lần đầu dùng:** LazyK tự cài Piper (khoảng 20 MB, chỉ khi chạy bằng Python) và tự tải giọng của ngôn ngữ đích. Việc này diễn ra khi bạn bật *Read the translation aloud*, chọn *Local voice*, đổi ngôn ngữ đích hoặc mở app với *Local voice* đang bật. Toolbar hiện tiến trình (%). Trong lúc tải, LazyK tạm đọc bằng giọng online. Giọng được lưu ở `%LOCALAPPDATA%\LazyK\models` (cùng chỗ với model OCR local), tên file dạng `piper_vi.onnx`. Muốn tải lại thì xoá hai file `piper_<ngôn ngữ>.onnx` và `.onnx.json`.
 
 | Mục trong ⚙ → Text to speech | Ý nghĩa |
 |---|---|
 | **Read the translation aloud** | Bật / tắt đọc to |
-| **Speed** | Tốc độ đọc 50–200 % (100 = bình thường). Áp dụng cho các đoạn được tạo sau khi đổi |
-| **Volume** | Âm lượng 0–100 % so với âm lượng Windows (muốn to hơn thì tăng âm lượng hệ thống). Đổi là có hiệu lực từ đoạn kế tiếp |
+| **Local voice** / **Online voice** | Chọn giọng. Bên phải *Local voice* ghi trạng thái: *fast · offline* (đã có), *download … MB* (chưa tải) hoặc *online for this language* (ngôn ngữ chưa có giọng local). Chọn xong là đọc thử một câu |
+| **Speed** | Tốc độ đọc 50–200 % (100 = bình thường) |
+| **Volume** | Âm lượng 0–100 % so với âm lượng Windows (muốn to hơn thì tăng âm lượng hệ thống) |
 | **Test voice** | Đọc một câu mẫu. Gõ số vào Speed / Volume rồi Enter cũng đọc câu mẫu luôn |
 
 * **Dừng ngay** khi bạn cuộn trang, nhấn `Esc`, tạm dừng, ẩn bản dịch (👁) hoặc có bản dịch mới. Trang lấy lại từ cache (cuộn quay về) **không** đọc lại.
 * **Visual novel:** mỗi dòng thoại mới được đọc một lần (kèm tên nhân vật nếu có).
-* **Giọng đọc** tự chọn theo ngôn ngữ đích (⚙ → Language → To): tiếng Việt dùng `vi-VN-HoaiMyNeural` (nữ). Muốn giọng khác, sửa `tts_voice` trong `settings.json`, ví dụ `"vi-VN-NamMinhNeural"` (nam). Để `"auto"` thì tự chọn lại.
-* **Bắt đầu đọc nhanh:** câu dài được cắt thành các đoạn ngắn, đoạn đầu phát ngay trong khi các đoạn sau đang được tạo.
-* **Bắt đầu đọc nhanh:** ngay khi bắt đầu quét trang, LazyK mở sẵn kết nối tới dịch vụ giọng đọc và mở sẵn loa. Giọng được **phát ngay khi những gói âm thanh đầu tiên về tới** (không chờ tải xong cả câu), các câu nối tiếp nhau không bị ngắt quãng. Cần thư viện `miniaudio` (đã có trong `requirements.txt`, chạy lại `setup.bat`); thiếu thì LazyK tự dùng cách phát cũ.
-* **Cần Internet** (giọng được tạo trên dịch vụ của Microsoft) và thư viện `edge-tts` (đã nằm trong `requirements.txt`; chạy lại `setup.bat` nếu nâng cấp từ bản cũ). Mất mạng thì chỉ hiện một thông báo ngắn, phần dịch vẫn chạy bình thường.
+* **Giọng online** tự chọn theo ngôn ngữ đích (⚙ → Language → To): tiếng Việt dùng `vi-VN-HoaiMyNeural` (nữ). Muốn giọng khác, sửa `tts_voice` trong `settings.json`, ví dụ `"vi-VN-NamMinhNeural"` (nam). Để `"auto"` thì tự chọn lại.
+* **Cài đặt:** `setup.bat` cài `edge-tts`, `miniaudio` và `piper-tts`. Bản **exe** có sẵn Piper khi được build bằng `build_exe.bat` trên máy đã cài Piper. Mất mạng khi dùng giọng online thì chỉ hiện một thông báo ngắn, phần dịch vẫn chạy bình thường.
 * **Thử giọng ngoài app:** `.venv\Scripts\python main.py --tts "Xin chào các bạn"`.
 
 ### Bản ghi dịch tạm
@@ -288,7 +310,8 @@ Mục **Local OCR models** trong menu mở cửa sổ quản lý model:
 <details>
 <summary><b>Bật Text to speech mà không nghe thấy tiếng</b></summary>
 
-- Máy cần có Internet. Báo *"Text to speech failed (check the internet connection)"* nghĩa là không kết nối được dịch vụ giọng.
+- Giọng online cần Internet. Báo *"Text to speech failed (check the internet connection)"* nghĩa là không kết nối được dịch vụ giọng. Thử chuyển sang *Local voice*.
+- Báo *"Local voice setup failed …"*: xem dòng `TTS: local voice setup failed` trong `logs\lazyk.log` (thường là mất mạng khi tải giọng). Chọn lại *Online voice* rồi *Local voice* để thử lại. Bản exe báo *"This build has no local voice"* thì build lại bằng `build_exe.bat` trên máy đã chạy `setup.bat`.
 - Báo *"install edge-tts"*: chạy lại `setup.bat` để cài thư viện còn thiếu.
 - Thử `.venv\Scripts\python main.py --tts "Xin chào"`. Nghe được ở đây mà trong app không có thì kiểm tra *Volume* (⚙ → Text to speech) và xem `logs\lazyk.log`, dòng `app.tts` ghi rõ câu bị lỗi.
 - Giọng bắt đầu chậm vài giây ở lần đọc đầu tiên là bình thường; từ lần sau nhanh hơn.
@@ -359,7 +382,7 @@ Kết quả là một file duy nhất `Output\LazyK-Setup-<phiên bản>.exe`. N
 
 - LazyK chỉ gửi **ảnh vùng trang truyện** và **chữ cần dịch** tới dịch vụ AI bạn chọn (Google Gemini hoặc Cloudflare). Không có máy chủ trung gian nào khác.
 - API key và cài đặt nằm trong `settings.json` trên máy bạn.
-- Nếu bật **Text to speech**, **phần chữ đã dịch** (không phải ảnh) được gửi tới dịch vụ giọng đọc của Microsoft Edge để tạo âm thanh. Tắt Text to speech thì không có gì được gửi.
+- Nếu bật **Text to speech** với *Online voice*, **phần chữ đã dịch** (không phải ảnh) được gửi tới dịch vụ giọng đọc của Microsoft Edge để tạo âm thanh. *Local voice* đọc ngay trên máy, không gửi gì.
 - `record-lazyk.txt` chỉ nằm trên máy bạn và bị xoá khi thoát LazyK.
 
 ## 🧑‍💻 Dành cho nhà phát triển

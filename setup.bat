@@ -26,6 +26,9 @@ if errorlevel 1 (echo Install failed. & pause & exit /b 1)
 rem Local OCR engine (PaddleOCR models, PP-OCRv6 built in)
 "%PY%" -m pip install --no-deps rapidocr==3.9.2
 if errorlevel 1 (echo Install failed. & pause & exit /b 1)
+rem Local voice (Piper). --no-deps: it would add a second onnxruntime next to onnxruntime-directml
+"%PY%" -m pip install --no-deps piper-tts==1.8.0 pathvalidate
+if errorlevel 1 (echo Install failed. & pause & exit /b 1)
 echo.
 echo Done. Start with run.bat
 pause

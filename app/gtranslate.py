@@ -190,6 +190,55 @@ def _translate_many(todo, texts, sl, tl):
         return list(ex.map(lambda i: _one(texts[i], sl, tl), todo))
 
 
+_WORD = re.compile(r"[A-Za-z][A-Za-z']*")
+_SENT_END = re.compile(r"(?<=[.!?…])\s+(?=[\"'“(]?[A-Z])|(?<=[。！？])\s*")  # "case... to" stays one
+
+
+def _left_untranslated(src, out, tl):
+    """True when Google copied part of a Latin-script source into the translation unchanged (it does
+    that now and then for a second sentence): four source words in a row appear in the output."""
+    if tl.lower().startswith("en") or not out:
+        return False
+    words = [w.lower() for w in _WORD.findall(src)]
+    if len(words) < 4:
+        return False
+    o = " " + " ".join(w.lower() for w in _WORD.findall(out)) + " "
+    return any(" " + " ".join(words[k:k + 4]) + " " in o for k in range(len(words) - 3))
+
+
+def _gtx(text, sl, tl):
+    data = _get("google-gtx", "https://translate.googleapis.com/translate_a/single",
+                {"client": "gtx", "sl": sl, "tl": tl, "dt": "t", "q": text})
+    if isinstance(data, list) and data and isinstance(data[0], list):
+        return "".join(p[0] for p in data[0] if p and p[0])
+    return _first_text(data)
+
+
+def _repair(src, out, sl, tl):
+    """Translate `src` sentence by sentence (one request), then any sentence still left as it was with
+    the other endpoint. Returns the best translation found."""
+    sents = [x for x in _SENT_END.split(src) if x.strip()]
+    try:
+        if len(sents) > 1:
+            parts = _batch(sents, sl, tl) if _batch_ok[0] else [_one(x, sl, tl) for x in sents]
+        else:
+            parts = [_gtx(src, sl, tl)]
+        for k, (a, b) in enumerate(zip(sents, parts)):
+            if _left_untranslated(a, b, tl) or not b.strip():
+                try:
+                    parts[k] = _gtx(a, sl, tl) or b
+                except TranslateError:
+                    pass
+        fixed = " ".join(p.strip() for p in parts if p.strip())
+    except TranslateError as e:
+        log.info("Google: could not re-translate an untranslated part (%s)", e)
+        return out
+    if fixed and not _left_untranslated(src, fixed, tl):
+        log.info("Google left part of a line untranslated: fixed sentence by sentence")
+        return fixed
+    return fixed if fixed and len(fixed) >= len(out) * 0.5 else out
+
+
 def translate(lines, source_lang, target_lang, cancel=None):
     """lines -> translated lines (same length; an empty line stays empty)."""
     sl = SOURCES.get(source_lang, "auto")
@@ -212,6 +261,8 @@ def translate(lines, source_lang, target_lang, cancel=None):
     if todo:
         t0 = time.time()
         got = _translate_many(todo, texts, sl, tl)
+        got = [_repair(texts[i], t, sl, tl) if _left_untranslated(texts[i], t, tl) else t
+               for i, t in zip(todo, got)]
         log.info("Google: %d line(s) in %.2fs", len(todo), time.time() - t0)
         with _cache_lock:
             for i, t in zip(todo, got):

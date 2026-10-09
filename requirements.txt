@@ -3,7 +3,9 @@ Pillow>=10.0
 numpy>=1.26,<3
 requests>=2.31
 edge-tts>=7.0  # optional: read the translation aloud
-miniaudio>=1.59  # read aloud: plays the voice while it is still downloading (starts sooner)
+miniaudio>=1.59  # read aloud: gapless playback
+# Local voice: piper-tts is installed by setup.bat with --no-deps (it would add a second onnxruntime)
+pathvalidate>=3
 pynput>=1.7.6
 pystray>=0.19.5
 opencv-python-headless>=4.8
