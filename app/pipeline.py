@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 from PIL import Image, ImageDraw
 
-from . import gtranslate
+from . import gtranslate, refine
 from .api import make_client
 from .config import app_dir
 from .ocr import run_local_ocr, run_ocr
@@ -85,6 +85,8 @@ class Pipeline:
                 while len(self.cache) > CACHE_SIZE:
                     self.cache.popitem(last=False)
             return items, False
+        if mode == "local_google":
+            gtranslate.prewarm()  # reopen the connection to Google while the page is being read
         debug = [] if s["debug_save"] else None
         t0 = time.time()
         on_status("scanning", "Scanning…")
@@ -95,6 +97,7 @@ class Pipeline:
         t1 = time.time()
         log.info("OCR: %d items in %.1fs", len(items), t1 - t0)
         if items:
+            refine.attach_colors(img, items)  # background colour of every bubble / box (auto colour option)
             on_status("translating", "Translating…")
             src = [it["text"] for it in items]
             budgets = [char_budget(it, s, scale) for it in items]

@@ -34,6 +34,7 @@ echo === 2/4 Building (this takes a few minutes) ===
   --hidden-import pynput.mouse._win32 ^
   --hidden-import pystray._win32 ^
   --collect-all rapidocr ^
+  --hidden-import _miniaudio ^
   --collect-all edge_tts ^
   --collect-binaries onnxruntime ^
   main.py

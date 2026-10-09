@@ -65,6 +65,7 @@ class _ClickThroughWindow:
         self.canvas = tk.Canvas(self.win, bg=KEY_COLOR, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
         self.visible = False
+        self.version = 0  # bumped on every visible change (the page watcher must not take it for a scroll)
         self.hwnd = None  # set after the first map (Windows)
         self._excl = True  # tooltips / status pill: never in any screenshot (unless developer mode)
 
@@ -104,6 +105,7 @@ class _ClickThroughWindow:
             winapi.make_overlay_window(self.hwnd, self.exclude_from_capture)
             winapi.show_no_activate(self.hwnd)
         self.visible = True
+        self.version += 1
 
     def hide(self):
         if self.visible:
@@ -111,6 +113,7 @@ class _ClickThroughWindow:
                 winapi.hide_window(self.hwnd)
             else:
                 self.win.withdraw()
+            self.version += 1
         self.visible = False
 
 
@@ -169,7 +172,8 @@ class Overlay(_ClickThroughWindow):
         boxes = layout_items(items, w, h, s, scale, self._metrics)
         self._hit, self._hover_tag, self._pics = [], None, []
         opacity, blur = int(s["overlay_opacity"]), int(s["overlay_blur"])
-        see_through = opacity < 100 and any(b["kind"] != "poly" for b in boxes)
+        # see-through / blurred boxes are a visual novel option; manga and webtoon boxes stay solid
+        see_through = s["layout"] == "vn" and opacity < 100 and any(b["kind"] != "poly" for b in boxes)
         bgshot = self._background(rect) if see_through else None
         if not see_through:
             self._bg = None
@@ -253,8 +257,10 @@ class Overlay(_ClickThroughWindow):
         if tag:
             self.canvas.itemconfigure(tag, state="hidden")
         self._hover_tag = tag
+        self.version += 1
 
     def clear(self):
+        self.version += 1
         self.canvas.delete("all")
         self._hit, self._hover_tag, self._pics, self._bg = [], None, [], None
         self.hide()

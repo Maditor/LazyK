@@ -24,6 +24,10 @@ from .api import Cancelled
 
 log = logging.getLogger(__name__)
 
+GPU_ID = 0  # DirectML device used when the graphics card is on (set from settings.local_gpu_id)
+# Visual novel: manga-ocr (slow, no KV cache) only re-reads rows RapidOCR is NOT sure about
+VN_MOCR_BELOW = 0.90
+
 # ---------------------------------------------------------------- model files
 # name -> list of (url, sha256 or None); the first URL that works wins
 FILES = {
@@ -177,7 +181,7 @@ def _session(model, use_gpu):
     if gpu == "DirectML":
         so.enable_mem_pattern = False  # required by DirectML
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+        providers = [("DmlExecutionProvider", {"device_id": str(GPU_ID)}), "CPUExecutionProvider"]
     elif gpu == "CUDA":
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     try:
@@ -236,10 +240,32 @@ def _mocr_post(text):
 
 
 # ---------------------------------------------------------------- RapidOCR (PaddleOCR models)
-def _rapid(kind, use_gpu, rec_only=False):
+def _patch_dml_device():
+    """RapidOCR passes no device number to DirectML (it always takes card 0). Let it use GPU_ID instead.
+    Card 0 keeps RapidOCR's own behaviour. Written against the pinned rapidocr 3.9.2; if the module is not
+    as expected nothing changes (the default card is used)."""
+    try:
+        from rapidocr.inference_engine.onnxruntime import provider_config as pc
+        if getattr(pc.ProviderConfig, "_lazyk_dml", False):
+            return
+        orig = pc.ProviderConfig.dml_ep_cfg
+
+        def dml_ep_cfg(self):
+            return {"device_id": str(GPU_ID)} if GPU_ID else orig(self)
+        pc.ProviderConfig.dml_ep_cfg = dml_ep_cfg
+        pc.ProviderConfig._lazyk_dml = True
+    except Exception as e:  # noqa: BLE001
+        log.info("Could not set the DirectML device (using the default card): %s", e)
+
+
+def _rapid(kind, use_gpu, rec_only=False, vn=False):
     """kind: 'multi' (built-in PP-OCRv6: ja / zh / en) | 'ko' (PP-OCRv5 Korean) | 'det' (detector only).
     rec_only: no detector; the image given is already one line of text (visual novel row re-read).
-    It must be its own instance: calling a normal engine with use_det=False corrupts its later calls."""
+    It must be its own instance: calling a normal engine with use_det=False corrupts its later calls.
+    vn: detector for a visual novel text box. RapidOCR's default (limit_type 'min', 736) ENLARGES every image
+    until its short side is 736 px, so a 1000x220 dialogue box is detected at ~3300x736: about 8x slower
+    (measured 4.0 s -> 0.5 s, same lines read). limit_type 'max' keeps the original size (what Luna does);
+    manga pages are big already and keep the default."""
     from rapidocr import RapidOCR
     import rapidocr
     builtin = os.path.join(os.path.dirname(rapidocr.__file__), "models")
@@ -258,13 +284,24 @@ def _rapid(kind, use_gpu, rec_only=False):
     }
     if kind == "det":
         params["Global.use_rec"] = False
+    if vn:
+        params["Det.limit_type"] = "max"
     if rec_only:
         params["Global.use_det"] = False
     if kind == "ko":
         from rapidocr import LangRec, ModelType, OCRVersion
         params.update({"Rec.model_path": path("korean_rec.onnx"), "Rec.lang_type": LangRec.KOREAN,
                        "Rec.ocr_version": OCRVersion.PPOCRV5, "Rec.model_type": ModelType.MOBILE})
-    return RapidOCR(params=params)
+    if gpu == "DirectML":
+        _patch_dml_device()
+    try:
+        return RapidOCR(params=params)
+    except Exception as e:  # noqa: BLE001
+        if gpu != "DirectML":
+            raise
+        log.warning("OCR on graphics card %s failed (%s): using the CPU", GPU_ID, e)
+        params["EngineConfig.onnxruntime.use_dml"] = False
+        return RapidOCR(params=params)
 
 
 def _lines(res, min_score=0.5):
@@ -364,6 +401,18 @@ def _group_lines(lines, cjk_join, gray=None):
 # frame edge is not detected at all, and small text is missed. The VN reader below fixes each.
 _VN_END = re.compile(r"[.!?…。！？\"”」』)）]$")
 _VN_BRACKETS = "【】[]「」『』()（）<>《》:："
+_VN_OPEN, _VN_CLOSE = "([（「『【《<", ")]）」』】》>"
+
+
+def _name_bracketed(t):
+    """【Yuki】 (Yuki) 「Yuki」 or "Yuki:" look like a speaker label. A lone opening bracket does not:
+    "(My life, everything," is the first line of a thought that closes on the next line."""
+    t = t.strip()
+    if not t:
+        return False
+    if t[-1] in ":：":
+        return True
+    return t[0] in _VN_OPEN and t[-1] in _VN_CLOSE and _VN_OPEN.index(t[0]) == _VN_CLOSE.index(t[-1])
 
 
 def _pad_bgr(bgr, pad):
@@ -431,11 +480,11 @@ def _split_name(rows):
     r0, rest = rows[0], rows[1:]
     t = r0["text"].strip()
     core = t.strip(_VN_BRACKETS + " ")
-    if not core or len(core) > 24 or len(core.split()) > 4 or _VN_END.search(core):
-        return "", rows
+    if not core or len(core) > 24 or len(core.split()) > 4 or _VN_END.search(core) or core[-1] in ",、，;；":
+        return "", rows  # a name does not end like a sentence, nor with a comma (the sentence goes on below)
     h0, h1 = r0["y2"] - r0["y1"], rest[0]["y2"] - rest[0]["y1"]
     w0, wb = r0["x2"] - r0["x1"], max(r["x2"] - r["x1"] for r in rest)
-    bracket_cue = t != core
+    bracket_cue = _name_bracketed(t)
     if w0 > 0.6 * wb and not bracket_cue:
         return "", rows
     gap = rest[0]["y1"] - r0["y2"]
@@ -476,11 +525,14 @@ class LocalOcr:
     def warm(self, settings):
         """Load the usual models in the background so the first page is not slow."""
         def run():
+            from . import winapi
+            winapi.lower_this_thread()
             try:
                 with self._lock:
                     use_gpu = bool(settings["local_gpu"])
                     kind = "ko" if settings["source_lang"] == "ko" and pack_ready("ko") else "multi"
                     self._get(kind, lambda: _rapid(kind, use_gpu), use_gpu)
+                    self._get(kind + "_vn", lambda: _rapid(kind, use_gpu, vn=True), use_gpu)
                     # visual novel rows are re-read by their own recognizer: load it now too, or the
                     # first dialogue box that needs it waits for the model to load
                     self._get(kind + "_rec", lambda: _rapid(kind, use_gpu, rec_only=True), use_gpu)
@@ -489,9 +541,10 @@ class LocalOcr:
         threading.Thread(target=run, daemon=True).start()
 
     def _get(self, key, factory, use_gpu, on_status=None):
-        if self._gpu != use_gpu:  # GPU setting changed: reload everything
+        sig = (bool(use_gpu), GPU_ID if use_gpu else 0)
+        if self._gpu != sig:  # CPU / graphics card setting or which card changed: reload everything
             self._models.clear()
-            self._gpu = use_gpu
+            self._gpu = sig
         if key not in self._models:
             if on_status:
                 on_status("Loading local OCR…")
@@ -570,7 +623,7 @@ class LocalOcr:
 
     # -------------------------------------------------- visual novel text box
     def _vn_detect(self, kind, bgr, use_gpu, on_status):
-        eng = self._get(kind, lambda: _rapid(kind, use_gpu), use_gpu, on_status)
+        eng = self._get(kind + "_vn", lambda: _rapid(kind, use_gpu, vn=True), use_gpu, on_status)
         raw = _lines(eng(bgr), min_score=0.0)
         good = _vn_keep(raw)
         weight = sum(_area(l) for l in raw) or 1
@@ -601,6 +654,7 @@ class LocalOcr:
         bgr0 = np.ascontiguousarray(np.asarray(img)[:, :, ::-1])
         use_mocr = src in ("ja", "auto") and settings["local_manga_ocr"] and pack_ready("mocr")
         trace = {"scale": 1.0, "kind": "", "cover": 0.0, "rows": [], "name_cues": []}
+        t_start = time.time()
         with self._lock:
             import cv2
             first = "ko" if src == "ko" else ("multi" if src in ("ja", "zh", "en") else self._last_lang)
@@ -624,14 +678,15 @@ class LocalOcr:
             kind, cover, lines = detect_all(work)
             # 2. small text: enlarge so the detector and the recognizer see about 32 px letters
             hs = sorted(l["box"][3] - l["box"][1] for l in lines if l["score"] >= 0.5)
-            if hs and hs[len(hs) // 2] < 22:
-                f = min(2.5, 32.0 / hs[len(hs) // 2])
+            if (not hs) or hs[len(hs) // 2] < 22:  # nothing found at 1:1 is retried once enlarged
+                f = 2.0 if not hs else min(2.5, 32.0 / hs[len(hs) // 2])
                 big = cv2.resize(bgr0, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
                 work2 = _pad_bgr(big, int(pad * f))
                 kind2, cover2, lines2 = detect_all(work2)
                 if cover2 >= cover - 0.02 and len(lines2) >= len(lines):
                     work, kind, cover, lines, trace["scale"] = work2, kind2, cover2, lines2, round(f, 2)
             trace["kind"], trace["cover"] = kind, round(cover, 2)
+            t_detect = time.time() - t_start
             self._last_lang = kind
             self.hint = "" if (cover >= 0.5 or pack_ready("ko")) else "Korean page? Download the Korean model"
             if not lines:
@@ -653,7 +708,7 @@ class LocalOcr:
                     txt, sc = self._vn_reread(kind, work, r, use_gpu, on_status)
                     if txt and _TEXTY.search(txt) and sc >= 0.5:
                         r["text"], r["score"], r["reread"] = txt, sc, True
-                if mocr is not None:
+                if mocr is not None and r["score"] < VN_MOCR_BELOW:
                     H, W = work.shape[:2]
                     crop = Image.fromarray(np.ascontiguousarray(
                         work[max(0, r["y1"] - 4):min(H, r["y2"] + 4), max(0, r["x1"] - 4):min(W, r["x2"] + 4)][:, :, ::-1]))
@@ -671,6 +726,8 @@ class LocalOcr:
                               "box": [r["x1"], r["y1"], r["x2"], r["y2"]]} for r in rows]
             log.info("VN OCR %s x%.1f cover %.2f: name=%r text=%r rows=%s", kind, trace["scale"], cover, name, text,
                      [(r["text"], round(r["score"], 2), "re" if r["reread"] else "") for r in rows])
+            log.info("VN OCR timing: detect %.2fs, rows %.2fs, total %.2fs", t_detect,
+                     time.time() - t_start - t_detect, time.time() - t_start)
             return {"name": name, "text": text, "trace": trace}
 
 

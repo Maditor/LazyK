@@ -167,6 +167,17 @@ def make_overlay_window(hwnd, exclude_from_capture: bool = True):
         pass
 
 
+def lower_this_thread():
+    """Background warm-up work: run below everything else, so loading models never makes the PC stutter."""
+    if not IS_WIN:
+        return
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.SetThreadPriority(k32.GetCurrentThread(), -2)  # THREAD_PRIORITY_LOWEST
+    except Exception:
+        pass
+
+
 def cursor_pos():
     """Mouse position in physical screen px, or None."""
     if not IS_WIN:

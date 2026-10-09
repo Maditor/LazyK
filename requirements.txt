@@ -3,6 +3,7 @@ Pillow>=10.0
 numpy>=1.26,<3
 requests>=2.31
 edge-tts>=7.0  # optional: read the translation aloud
+miniaudio>=1.59  # read aloud: plays the voice while it is still downloading (starts sooner)
 pynput>=1.7.6
 pystray>=0.19.5
 opencv-python-headless>=4.8

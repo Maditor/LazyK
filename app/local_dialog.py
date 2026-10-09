@@ -83,7 +83,7 @@ class LocalDialog:
         gpu = L.gpu_name()
         for var, title, sub, cmd in (
                 (self.gpu, "Use the graphics card",
-                 f"{gpu} found: much faster" if gpu else "No GPU runtime found: runs on the CPU",
+                 f"{gpu} available. Pick the card or the CPU in the toolbar menu (OCR device)" if gpu else "No GPU runtime found: runs on the CPU",
                  lambda: self.s.update(local_gpu=bool(self.gpu.get()))),
                 (self.mocr, "Read Japanese with manga-ocr", "When it is downloaded. Slower, more accurate.",
                  lambda: self.s.update(local_manga_ocr=bool(self.mocr.get())))):

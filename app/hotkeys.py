@@ -183,6 +183,22 @@ class InputWatcher:
         self._ms.daemon = True
         self._ms.start()
 
+    def ensure_alive(self):
+        """Restart a listener whose thread ended (an error inside pynput stops it for good)."""
+        restarted = []
+        if self._kb is not None and not self._kb.is_alive():
+            self._kb = keyboard.Listener(on_press=self._press, on_release=self._release)
+            self._kb.daemon = True
+            self._kb.start()
+            restarted.append("keyboard")
+        if self._ms is not None and not self._ms.is_alive():
+            kw = {"win32_event_filter": self._mouse_filter} if sys.platform == "win32" else {}
+            self._ms = mouse.Listener(on_scroll=self._wheel, **kw)
+            self._ms.daemon = True
+            self._ms.start()
+            restarted.append("mouse")
+        return restarted
+
     def stop(self):
         for l in (self._kb, self._ms):
             if l:

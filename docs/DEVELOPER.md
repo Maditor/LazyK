@@ -64,7 +64,7 @@ up in screenshots, so it is never translated. Menus open upwards when the bar si
 | Server chip | Pick server and model, auto-switch toggles, API keys |
 | ↻ ❚❚ 👁 | Translate now · pause/resume · show/hide overlay |
 | ⛶ | Draw a frame around the comic page (amber when your frame is used) |
-| ⚙ | Settings: Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size field, show in screenshots), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
+| ⚙ | Settings (short top level, submenus for the rest): Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size, colours, Box & overlay ›), OCR device ›, Read aloud ›, Hotkeys ›, More › (translation record, taskbar, developer mode), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
 | `‹` / `✕` | Collapse (keeps ● and ↻ ❚❚ 👁 ⛶) / quit |
 
 ## Capture frame (Region)
@@ -120,16 +120,17 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `target_lang` | `Vietnamese` | |
 | `layout` | `manga` | `manga` = right→left, `webtoon` = left→right |
 | `skip_sfx` | `true` | Drop sound-effect lettering |
-| `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\``. `hotkey_translate` may also be `mouse3` / `mouse4` / `mouse5` (wheel click / side buttons, optionally with modifiers); set it from ⚙ → Translate key… |
+| `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\``. `hotkey_translate` may also be `mouse3` / `mouse4` / `mouse5` (wheel click / side buttons, optionally with modifiers); set it from ⚙ → Hotkeys → Translate key… |
 | `layout` = `vn` | | Visual novel mode: `app/vn.py` (one small read + one translation per line, no tiles / bubbles) |
 | `vn_region` | `null` | Text box frame (physical px), separate from `region` |
 | `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Alt+Shift+V`) |
-| `hotkey_toolbar` | `alt+shift+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Show / hide toolbar key…** |
+| `hotkey_toolbar` | `alt+shift+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Hotkeys → Show / hide toolbar key…** |
 | `taskbar_icon` | `true` | Taskbar button (right-click → Close window quits; a click shows the toolbar). Hidden together with the toolbar |
 | `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |
-| `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; use the text box's own colour for the overlay |
+| `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; auto-detect the background colour for the overlay in every layout (VN: `vn.frame_colors`; manga / webtoon: `refine.attach_colors`, a ring around each text box) |
 | `hover_hide` | `true` | Mouse over a translated box hides that box until the mouse leaves |
 | `hide_on_scroll` | `true` | |
+| `local_gpu`, `local_gpu_id` | `false`, `0` | Local OCR on a graphics card (DirectML) or the CPU, and which card (DirectML device number = DXGI adapter order). Set from ⚙ → OCR device, which lists the cards found by `app/gpus.py` |
 | `tts_enabled` | `false` | Read the translation aloud after each fresh translation (⚙ → Read aloud). Not read again for cached pages |
 | `tts_voice` | `auto` | `auto` = by `target_lang` (Vietnamese → `vi-VN-HoaiMyNeural`), or any Edge voice name, e.g. `vi-VN-NamMinhNeural` |
 | `tts_speed`, `tts_volume` | `100`, `100` | Speed 50–200 % (sent to the service as `rate`), volume 0–100 % (MCI `setaudio`, so never above the system volume) |
@@ -141,7 +142,7 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `overlay_bg` / `overlay_fg` | `#ffffff` / `#111111` | |
 | `overlay_outline` | `""` | e.g. `#cccccc` for a thin border |
 | `overlay_shadow` | `false` | |
-| `overlay_in_screenshots` | `true` | Print Screen / Snipping Tool capture the translated page (⚙ → Show in screenshots) |
+| `overlay_in_screenshots` | `true` | Print Screen / Snipping Tool capture the translated page (⚙ → Text → Box & overlay) |
 | `font_family`, `font_bold` | `Segoe UI`, `true` | |
 | `font_min` | `14` | Reading size (⚙ → Text): overlay text never gets smaller, only up to 1.6× bigger in roomy bubbles |
 | `corner_radius`, `box_padding` | `10`, `6` | Logical px |
@@ -204,6 +205,7 @@ app/hotkeys.py       global hotkeys, mouse buttons and scroll watching
 app/vn.py            visual novel mode: one-line read + translate, text-box change watcher
 app/tts.py           read aloud: edge-tts voices, chunked + parallel synthesis, MCI playback, retries
 app/record.py        session record of the translations (record-lazyk.txt)
+app/gpus.py          lists the graphics cards (DXGI) in a child process: `main.py --list-gpus FILE`
 app/controller.py    Tk loop, jobs on worker threads, cancellation
 app/toolbar.py       floating toolbar, tooltips, font picker
 app/tray.py          system tray icon (pystray): show / hide toolbar, quit
@@ -292,4 +294,58 @@ rebuilds the tray menu text. If the tray cannot start (pystray not installed: ru
 While the toolbar is hidden an error shows in the status pill and in the tray icon's hover text.
 `App.quit` must call `TrayIcon.stop()`: pystray's thread is not a daemon.
 On Windows 11 new tray icons start in the overflow (^) area: drag the LazyK icon out to keep it visible.
-Settings has no hide button: ⚙ → **Show / hide toolbar key…** only changes the shared key.
+Settings has no hide button: ⚙ → **Hotkeys → Show / hide toolbar key…** only changes the shared key.
+
+## Visual novel speed (v29)
+
+- The VN text-box detector is its own RapidOCR instance (`_rapid(..., vn=True)`, cache key `<kind>_vn`) with `Det.limit_type = max`: the box is detected at its real size instead of being enlarged to 736 px on the short side (about 8x faster). Manga / webtoon keep the default engine.
+- manga-ocr re-reads only rows whose RapidOCR score is below `VN_MOCR_BELOW` (0.90).
+- `gtranslate` keeps a 500-line cache and skips the thread pool for a single line.
+- The log shows `VN OCR timing: detect / rows / total` for every scan.
+- `local_gpu` now defaults to the CPU; `settings.json` is switched once (`_gpu_cpu_default`).
+
+## Blur (v30)
+
+- `overlay_blur` is the screen seen through a box (`overlay.glass_image`), so it only shows when `overlay_opacity < 100`; at 100 the box is solid and blur had no effect. Typing a blur above 0 now sets the opacity to 75% if it was 100.
+- A Gaussian blur keeps the average colour, so the auto-picked box colour (`vn_game_colors`, `bubble_colors`) and text colour are the same at any blur radius; they are chosen from the unblurred capture and blur only changes what shows through.
+- Cleaned manga bubbles (`poly`) stay solid paper on purpose.
+- Opacity and blur are visual novel only: the two menu entries show only when `layout == "vn"`, and `overlay.show_items` paints solid boxes in every other layout.
+- The Read & translate menu (`Toolbar.open_server_menu`) is persistent like Settings: it is a builder that is re-run after every pick, stays open until Esc, its button or a click outside, and only the items that open a dialog (`Local OCR models…`, `API keys & models…`, a server without a key) use mode `"close"`.
+
+## Speaker name detection (v31)
+
+- `_split_name`: the bracket cue needs a balanced pair (`【Yuki】`, `(Yuki)`, `「Yuki」`) or a trailing colon (`_name_bracketed`). A first row with only an opening bracket, such as `(My life, everything,`, is the start of a thought, not a name. A row ending in a comma is never a name.
+
+
+
+## Scroll detection (`app/scrollwatch.py`)
+
+Auto mode used to rely only on the pynput low-level mouse hook (`WM_MOUSEWHEEL`). That misses
+precision-touchpad scrolling in Chromium (DirectManipulation sends no wheel messages), scrollbar drags,
+and a hook that Windows silently removes after a slow callback. `PageWatcher` grabs the watched page
+(120 px wide grey copy) every 120 ms and reports `("pagemove", hwnd)` when the content shifted
+vertically across most of the width (row profiles in 4 bands, best shift vs. no shift). Overlay
+boxes are masked, and two looks are only compared when `overlay.version` and `busy` are unchanged, so
+the translation appearing / hover-hide never count as a scroll. Animations (ads, video) change pixels
+but do not shift, so they never trigger. `settings.scroll_watch = false` turns it off.
+
+`App._poll` can no longer die on an exception (it always reschedules), and `InputWatcher.ensure_alive()`
+restarts a pynput listener whose thread ended.
+
+
+## Read aloud latency (`app/edge_fast.py`)
+
+edge-tts opens a new secure websocket per piece of text. `EdgeClient` keeps one websocket open on a
+private asyncio loop and sends every SSML request over it (speech.config once per connection,
+audio collected until `turn.end`). `Speaker.prepare()` is called when a scan starts, so the
+connection is ready when the translation arrives; the first chunk is at most 40 characters; the MCI
+mp3 decoder is opened once at warm-up. A reused connection that stays silent for 4 s, or any
+protocol error, triggers one reconnect; `Unsupported` (edge-tts internals changed) switches to plain
+edge-tts for the session.
+
+Streaming playback: with `miniaudio` installed, `Speaker._run_stream` sends the pieces one after another
+over the open connection and writes every mp3 packet into an `Mp3Pipe`; `StreamPlayer` decodes it
+with `miniaudio.stream_any` and feeds a sound device that is opened in `prepare()` (silence while
+idle, closed after 30 s without sound). The voice starts with the first packet instead of after the
+whole piece, file and MCI open. Without miniaudio (or if streaming fails before any sound) the
+file + MCI path is used.

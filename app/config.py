@@ -39,7 +39,8 @@ DEFAULTS = {
     "auto_switch_server": True,     # server out of quota / bad key -> the other server
     # Reading the page (OCR)
     "ocr_engine": "ai",             # ai (the server above reads the image) | local (this PC reads it)
-    "local_gpu": True,              # local OCR on the graphics card (DirectML) when available
+    "local_gpu": False,             # local OCR on a graphics card (DirectML); false = CPU (default: small models are faster on the CPU)
+    "local_gpu_id": 0,              # which card: DirectML device number (0 = the Windows default card)
     "local_manga_ocr": True,        # Japanese: re-read blocks with manga-ocr when it is downloaded
     "translator": "ai",             # with local OCR: ai (Gemini / Cloudflare) | google (Google Translate, no key)
     # Languages / content
@@ -63,14 +64,16 @@ DEFAULTS = {
     "taskbar_icon": True,           # a taskbar button: right-click → Close window quits, click shows the toolbar
     "hotkey_quit": "ctrl+alt+q",    # until the tray icon exists (step 2)
     "hide_on_scroll": True,
+    "scroll_watch": True,           # also detect scrolling by watching the page (touchpad, scrollbar drag)
     # Visual novel mode
     "vn_region": None,              # [x, y, w, h] physical px: the game's text box
     "vn_auto": False,               # scan by itself when the text in the box changes (own on / off)
-    "vn_poll_ms": 200,              # how often the text box is looked at while auto-scan is on
-    "vn_stable_ms": 350,            # text must stay unchanged this long (typewriter effect) before a scan
+    "vn_poll_ms": 100,              # how often the text box is looked at while auto-scan is on
+    "vn_stable_ms": 200,            # text must stay unchanged this long (typewriter effect) before a scan
+                                    # (AI reading the image: at least 350, a scan started too early costs quota)
     "vn_change_pct": 0.3,           # % of the box that must change to count as new text (raise it if a big icon blinks)
     "vn_max_width": 1000,           # image width sent to the AI
-    "vn_game_colors": True,         # paint the translation in the text box's own colour
+    "vn_game_colors": True,         # auto-detect the background colour (all layouts: manga, webtoon, visual novel) and paint the translation in it
     # Capture
     "capture_mode": "window",       # window (browser page area) | region (frame drawn by the user)
     "region": None,                 # [x, y, w, h] physical px of the drawn frame
@@ -94,13 +97,16 @@ DEFAULTS = {
     "font_bold": True,
     "font_min": 14,                 # reading size in logical px: overlay text never gets smaller
     "font_max": 22,
+    "auto_text_size": True,
+    "presets": [],                  # [{"name", "values"}]: see presets.py
+    "preset_active": "",            # the preset picked last ("" = none)         # text may grow up to 1.6x in roomy boxes; off = always font_min
     "corner_radius": 10,
     "box_padding": 6,
     # Toolbar
     "toolbar_pos": None,            # [x, y] physical px, remembered after dragging
     "toolbar_collapsed": False,
     "show_status_pill": False,      # the toolbar already shows the status
-    # Read aloud (text to speech, Edge voices)
+    # Text to speech (Edge voices)
     "tts_enabled": False,           # read the translation aloud after each translation
     "tts_voice": "auto",            # auto = by target_lang, or a voice name such as vi-VN-NamMinhNeural
     "tts_speed": 100,               # % of normal speed (50-200)
@@ -138,6 +144,11 @@ class Settings:
 
     def save(self):
         with self._lock:
+            try:
+                from .presets import sync
+                sync(self.data)  # the active preset follows every change (no "update" step)
+            except Exception:
+                pass
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
@@ -169,6 +180,19 @@ class Settings:
 
     def load_migrate(self, saved: dict):
         """Older versions stored the Cloudflare model as cf_model and used Cloudflare only."""
+        if saved.get("_gpu_cpu_default") != 1:
+            # the CPU became the default (DirectML is slower for these small models): switch once, the user can
+            # turn the graphics card on again from the OCR device menu
+            self.data["local_gpu"] = False
+            self.data["_gpu_cpu_default"] = 1
+        if saved.get("_vn_timing") != 2:
+            # faster visual novel defaults (look 10x a second, scan after 0.2 s of still text): only replace
+            # the old defaults, never a value the user chose
+            if self.data.get("vn_poll_ms") == 200:
+                self.data["vn_poll_ms"] = 100
+            if self.data.get("vn_stable_ms") == 350:
+                self.data["vn_stable_ms"] = 200
+            self.data["_vn_timing"] = 2
         if saved.get("_font_scheme") != 2:
             # older versions shrank text below the chosen size; now font_min is the reading size
             self.data["font_min"] = max(int(self.data.get("font_min", 14)), 13)

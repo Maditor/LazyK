@@ -43,8 +43,10 @@ class App:
         self.q = queue.Queue()
         self.record = Record(settings)
         self.tts = Speaker(settings, on_error=lambda m: self.q.put(("toast", "error", m, 4000)))
-        if settings["tts_enabled"]:
-            self.tts.warm()  # load edge-tts now so the first reading starts at once
+        from . import local_ocr
+        local_ocr.GPU_ID = max(0, int(settings["local_gpu_id"] or 0))
+        # Warm-ups (OCR models, Google, voice, graphics card list) run one after another, at low
+        # priority, once the toolbar is up: see _quiet_start. All at once at launch made the PC stutter.
         self.gen = 0            # job generation: results of older jobs are dropped
         self.cancel = None
         self.busy = False
@@ -79,16 +81,36 @@ class App:
         self._make_tray()
         self.vn_watcher = VNWatcher(self)  # idle unless Reading order = Visual novel and auto-scan is on
         self.vn_watcher.start()
+        from .scrollwatch import PageWatcher
+        self.page_watcher = PageWatcher(self)  # sees scrolling the wheel hook misses (touchpad, scrollbar)
+        if self.s["scroll_watch"]:
+            self.root.after(2500, self.page_watcher.start)
         self.root.after(30, self._poll)
         self.toolbar.show()
-        if self.s["ocr_engine"] == "local" and not self.demo:
-            from . import local_ocr
-            local_ocr.ENGINE.warm(self.s)  # load the OCR models while the user opens a page
+        if not self.demo:
+            self._quiet_start()
         if self.s.needs_ai() and not self.s.has_credentials() and not self.demo:
             self._ask_credentials()
         else:
             self._status("ready", "Ready", auto_hide=2000)
         self.root.mainloop()
+
+    def _quiet_start(self):
+        """Load what the first page will need, gently: one thing at a time, spaced out, lowest priority.
+        Whatever the user does first (a scan) still loads what it needs on its own."""
+        from . import gpus, gtranslate, local_ocr
+        s = self.s
+        steps = []
+        if s["ocr_engine"] == "local":
+            steps.append((1200, lambda: local_ocr.ENGINE.warm(s)))
+        if s.read_mode() == "local_google":
+            steps.append((3500, gtranslate.warm))
+        if s["tts_enabled"]:
+            steps.append((5000, self.tts.warm))
+        # the graphics card list is only for the OCR device menu: read it late (or when that menu opens)
+        steps.append((15000, lambda: gpus.load(on_done=lambda: self.q.put(("gpus",)))))
+        for ms, fn in steps:
+            self.root.after(ms, fn)
 
     def quit(self):
         self._cancel_job()
@@ -99,6 +121,8 @@ class App:
         self.watcher.stop()
         if getattr(self, "vn_watcher", None):
             self.vn_watcher.stop()
+        if getattr(self, "page_watcher", None):
+            self.page_watcher.stop()
         self.root.quit()
 
     def _ask_credentials(self, then=None):
@@ -109,6 +133,14 @@ class App:
 
     # ------------------------------------------------------------ event loop
     def _poll(self):
+        try:
+            self._poll_once()
+        except Exception:
+            log.exception("Main loop tick failed")  # never let one error stop the loop: it runs everything
+        finally:
+            self.root.after(30, self._poll)
+
+    def _poll_once(self):
         try:
             while True:
                 ev = self.q.get_nowait()
@@ -129,7 +161,10 @@ class App:
             fg = winapi.foreground_window()
             if fg and not winapi.is_own_window(fg):
                 self.target_hwnd = winapi.root_window(fg)
-        self.root.after(30, self._poll)
+        if self._fg_tick % 100 == 0:  # ~3 s: the key / wheel listeners must still be running
+            restarted = self.watcher.ensure_alive()
+            if restarted:
+                log.warning("Input listener stopped, restarted: %s", ", ".join(restarted))
 
     def _update_hover(self):
         """Hide the translated box under the mouse so the original art / text below can be checked."""
@@ -185,14 +220,19 @@ class App:
                 self.toolbar.raise_()
         elif kind == "vn_scan":
             if self.s["layout"] == "vn" and self.s["vn_auto"] and not self.paused:
+                self._vn_t0 = ev[1] if len(ev) > 1 else None  # last time the text changed (for the log)
                 self.translate(auto=True)
         elif kind == "scroll":
             self._on_scroll(ev[1], ev[2])
+        elif kind == "pagemove":
+            self._on_page_move(ev[1])
         elif kind == "status":
             _, gen, state, text = ev
             if gen == self.gen:
                 self._status(state, text)
             self.toolbar.refresh()  # model / server may have been switched automatically
+        elif kind == "gpus":
+            self.toolbar.refresh_menu()  # the OCR device list just arrived
         elif kind == "toast":
             _, state, text, ms = ev
             if not self.busy:
@@ -201,6 +241,8 @@ class App:
             _, gen, rect, dpi, items, cached = ev
             if gen != self.gen:
                 log.info("Job %d finished but was superseded; result dropped", gen)
+                if not self.busy:
+                    self.status.hide()  # its "Translating…" must not stay on the page
                 return
             log.info("Job %d done: %d items%s", gen, len(items), " (cached)" if cached else "")
             self.busy = False
@@ -213,6 +255,11 @@ class App:
                 self._status("error" if hint else "info", hint or "No text found", auto_hide=6000 if hint else 2500)
                 return
             self.overlay.show_items(rect, items, dpi)
+            t0 = getattr(self, "_vn_t0", None)
+            if self.s["layout"] == "vn" and t0:
+                import time as _t
+                log.info("VN: translation shown %.2fs after the text stopped changing", _t.time() - t0)
+                self._vn_t0 = None
             self.toolbar.raise_()
             self.last = (rect, items, dpi)
             if not cached:
@@ -233,6 +280,8 @@ class App:
                 self._status("error", f"Error: {msg}", auto_hide=8000)
 
     def _status(self, state, text, auto_hide=None):
+        if auto_hide is None and state == "error":
+            auto_hide = 8000  # an error must never stay up forever (the details are in the log)
         self.toolbar.set_status(state, text, auto_hide)
         if getattr(self, "taskbar", None):  # hover text of the taskbar button: an error stays readable with the toolbar hidden
             self.taskbar.set_title(text if state == "error" else "")
@@ -245,7 +294,9 @@ class App:
             return
         # The toolbar is the main indicator; the pill near the page is optional (always for errors)
         if self.s["show_status_pill"] or state == "error" or ((self.toolbar.collapsed or self.toolbar.hidden) and state != "info"):
-            self.status.set(state, text, self.rect, self.dpi, auto_hide)
+            # "Scanning…" / "Translating…" are replaced by the next state; the long limit only matters
+            # if a job is dropped without a final word, so a stale pill never sits on the page.
+            self.status.set(state, text, self.rect, self.dpi, auto_hide or 120000)
 
     # ------------------------------------------------------------ actions
     def toggle_pause(self):
@@ -339,6 +390,22 @@ class App:
         if self.s.needs_ai() and not self.s.has_credentials():
             self._ask_credentials()
 
+    def set_ocr_device(self, gpu_id):
+        """None = CPU, else the DirectML card number. Models reload on their next use."""
+        from . import gpus, local_ocr
+        if gpu_id is None:
+            self.s.update(local_gpu=False)
+            label = "CPU"
+        else:
+            self.s.update(local_gpu=True, local_gpu_id=int(gpu_id))
+            local_ocr.GPU_ID = int(gpu_id)
+            card = next((g for g in gpus.cached() or [] if g["id"] == int(gpu_id)), None)
+            label = gpus.short_name(card["name"]) if card else f"graphics card {gpu_id}"
+        if self.s["ocr_engine"] == "local":
+            local_ocr.ENGINE.warm(self.s)  # load the models on the new device while the user keeps reading
+        self.toolbar.refresh()
+        self._status("info", "OCR on " + label, auto_hide=1800)
+
     def test_google(self):
         from . import gtranslate
         self._status("translating", "Testing Google…")
@@ -390,6 +457,93 @@ class App:
         on = self.s["vn_auto"]
         self._status("info", "VN auto-scan " + ("ON" if on else "OFF"), auto_hide=1500)
         self.rerender()  # the overlay is (not) excluded from screen captures while auto-scan is on
+
+    # ------------------------------------------------------------ presets
+    def apply_preset(self, name):
+        """Switch everything a preset holds in one go, with the same side effects as changing each by hand."""
+        from . import local_ocr, presets
+        p = presets.get(self.s, name)
+        if not p:
+            return
+        old = presets.snapshot_data(self.s.data)
+        self._cancel_job()
+        self._cancel_auto_timer()
+        self.overlay.clear()
+        vals = {k: v for k, v in (p.get("values") or {}).items() if k in presets.KEYS}
+        self.s.update(**vals, preset_active=name)
+        new = self.s
+        if old["layout"] != new["layout"] or old["target_lang"] != new["target_lang"]:
+            self.pipeline.prev_lines = []  # story context belongs to the other comic / language
+        local_ocr.GPU_ID = max(0, int(new["local_gpu_id"] or 0))
+        if new["ocr_engine"] == "local":
+            local_ocr.ENGINE.warm(new)
+        if new["tts_enabled"]:
+            self.tts.warm()
+        else:
+            self.tts.stop()
+        if new.read_mode() == "local_google":
+            from . import gtranslate
+            gtranslate.prewarm()
+        self.toolbar.refresh()
+        self._status("info", "Preset: " + name, auto_hide=1800)
+        if new.needs_ai() and not new.has_credentials():
+            self._ask_credentials()
+        elif new["layout"] == "vn" and not self._region():
+            self.root.after(300, self.select_region)
+
+    def create_preset(self, anchor=None):
+        """Name the current setup as a new preset; it becomes the one in use (Default stays as it was)."""
+        from . import presets
+        from .name_dialog import NameDialog
+        taken = [p["name"] for p in presets.all_(self.s)]
+        guess = {"manga": "Manga", "webtoon": "Webtoon", "vn": "Visual novel"}.get(self.s["layout"], "Preset")
+        n, base = 2, guess
+        while guess.lower() in {t.lower() for t in taken}:
+            guess, n = f"{base} {n}", n + 1
+
+        def ok(name):
+            name = presets.create(self.s, name)
+            self.toolbar.refresh()
+            self._status("ready", "Created preset: " + name, auto_hide=1800)
+        NameDialog(self.root, "Create new preset", guess, taken, ok, anchor=anchor)
+
+    def rename_preset(self, name, anchor=None):
+        from . import presets
+        from .name_dialog import NameDialog
+        if name == presets.DEFAULT:
+            return
+        taken = [p["name"] for p in presets.all_(self.s) if p["name"] != name]
+
+        def ok(new):
+            presets.rename(self.s, name, new)
+            self.toolbar.refresh()
+        NameDialog(self.root, "Rename preset", name, taken, ok, anchor=anchor)
+
+    def delete_preset(self, name, anchor=None):
+        from . import presets
+        from .name_dialog import ConfirmDialog
+        if name == presets.DEFAULT:
+            return
+
+        def ok():
+            was_active = presets.active(self.s) == name
+            presets.delete(self.s, name)
+            if was_active:
+                self.s.data["preset_active"] = presets.DEFAULT
+                self.apply_preset(presets.DEFAULT)  # back to Default's own settings
+            else:
+                self.s.save()
+                self.toolbar.refresh()
+            self._status("info", "Deleted preset: " + name, auto_hide=1800)
+        ConfirmDialog(self.root, "Delete preset", f"Delete “{name}”?", "Delete", ok, anchor=anchor)
+
+    def set_target_lang(self, name):
+        from . import langs
+        if self.s["target_lang"] != name:
+            self.s.update(target_lang=name)
+            self.pipeline.prev_lines = []  # context lines were in the other language's story
+        self.toolbar.refresh()
+        self._status("info", "Translate to: " + langs.target(name)[1], auto_hide=1800)
 
     def set_source_lang(self, code):
         names = {"auto": "Auto detect", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "en": "English"}
@@ -602,7 +756,14 @@ class App:
             v = int(float(str(text).strip()))
         except ValueError:
             return
-        self.s.update(overlay_blur=max(0, min(40, v)))
+        v = max(0, min(40, v))
+        upd = {"overlay_blur": v}
+        if v > 0 and int(self.s["overlay_opacity"]) >= 100:
+            # blur is the screen seen through the box: a fully solid box has nothing to blur, so the setting
+            # used to do nothing. Make the box see-through (the colours stay the auto-picked ones).
+            upd["overlay_opacity"] = 75
+            self._status("info", "Blur shows through a see-through box: opacity set to 75%", auto_hide=4000)
+        self.s.update(**upd)
         self.rerender()
         self.toolbar.refresh()
 
@@ -630,7 +791,7 @@ class App:
         self.toolbar.refresh()
 
     def set_tts_speed(self, text):
-        """Typed in Settings → Read aloud → Speed (50-200 %). Plays a short sample."""
+        """Typed in Settings → Text to speech → Speed (50-200 %). Plays a short sample."""
         from . import tts
         try:
             v = int(float(str(text).strip().rstrip("%")))
@@ -641,7 +802,7 @@ class App:
         self.tts.speak([tts.sample_text(self.s)])
 
     def set_tts_volume(self, text):
-        """Typed in Settings → Read aloud → Volume (0-100 %). Plays a short sample."""
+        """Typed in Settings → Text to speech → Volume (0-100 %). Plays a short sample."""
         from . import tts
         try:
             v = int(float(str(text).strip().rstrip("%")))
@@ -654,6 +815,12 @@ class App:
     def test_tts(self):
         from . import tts
         self.tts.speak([tts.sample_text(self.s)])
+
+    def toggle_auto_text_size(self):
+        self.s.update(auto_text_size=not self.s["auto_text_size"])
+        self.rerender()  # the page on screen is laid out again with the new rule
+        self._status("info", "Text size: " + ("grows in roomy boxes" if self.s["auto_text_size"] else
+                                              f"always {self.s['font_min']} px"), auto_hide=1800)
 
     def toggle_hover_hide(self):
         self.s.update(hover_hide=not self.s["hover_hide"])
@@ -679,6 +846,9 @@ class App:
 
     def _on_scroll(self, x, y):
         """Wheel (x, y = cursor) or navigation key (x, y = None)."""
+        if x is not None and not getattr(self, "_wheel_seen", False):
+            self._wheel_seen = True
+            log.info("Mouse wheel events are arriving")  # for the log: the wheel hook works
         if self.paused or self.selecting or self.s["layout"] == "vn":
             return  # visual novels use the wheel / Space to advance: the scroll trigger is for manga
         if x is None and winapi.is_own_window(winapi.foreground_window()):
@@ -707,6 +877,27 @@ class App:
         if was_busy:
             log.info("Job %d cancelled by scrolling", self.gen)
         if self.overlay.visible or self.busy:
+            self._cancel_job()
+            self.overlay.clear()
+            if was_busy:
+                self.status.hide()
+        if auto:
+            self._auto_hwnd = hwnd
+            self._cancel_auto_timer()
+            delay = max(150, int(self.s["scroll_delay_ms"]))
+            self._auto_job = self.root.after(delay, self._auto_fire)
+
+    def _on_page_move(self, hwnd):
+        """The page watcher saw the page scroll: same as a wheel scroll over it."""
+        if self.paused or self.selecting or self.s["layout"] == "vn":
+            return
+        auto = self.s["mode"] == "auto"
+        if not auto and not self.s["hide_on_scroll"]:
+            return
+        if self.overlay.visible or self.busy:
+            if self.busy:
+                log.info("Job %d cancelled: the page moved", self.gen)
+            was_busy = self.busy
             self._cancel_job()
             self.overlay.clear()
             if was_busy:
@@ -767,6 +958,8 @@ class App:
         self._cancel_job()
         self.overlay.clear()
         self.rect, self.dpi = rect, dpi
+        if self.s["tts_enabled"]:
+            self.tts.prepare()  # open the voice connection while the page is being read
         gen, cancel = self.gen, threading.Event()
         self.cancel, self.busy = cancel, True
         log.info("Job %d start (%s): rect %s dpi %s", gen, "auto" if auto else "manual", rect, dpi)

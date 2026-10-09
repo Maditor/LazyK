@@ -148,6 +148,10 @@ class Toolbar:
         self.lbl_status = tk.Label(b, text="On", bg=BG, fg=FG, font=self.f_ui, width=13, anchor="w")
         self.lbl_status.pack(side="left")
         self._sep(b)
+        self.btn_preset = self._button(b, "Default ▾", self.open_preset_menu,
+                                       "Presets: saved setups (reading order, languages, engines, look). The one in use keeps your changes",
+                                       chip=True, keep_focus=True)
+        self.btn_preset.pack(side="left", padx=1)
         self.btn_server = self._button(b, "Gemini · 3.5 Flash Lite ▾", self.open_server_menu,
                                        "Mode (who reads and who translates), AI server and model", chip=True, keep_focus=True)
         self.btn_server.pack(side="left", padx=1)
@@ -182,6 +186,9 @@ class Toolbar:
     # ------------------------------------------------------------ state
     def refresh(self):
         s = self.s
+        from . import presets
+        act = presets.active(s)
+        self.btn_preset.configure(text=(act if len(act) <= 14 else act[:13] + "…") + "  ▾")
         srv = s["server"]
         mode = s.read_mode()
         if mode == "local_google":  # this PC reads, Google translates: no AI at all
@@ -344,146 +351,211 @@ class Toolbar:
         self.menu = PopupMenu(self.root, builder, self._anchor(widget), self.fonts,
                               on_close=self._menu_closed, persistent=persistent)
 
-    def open_server_menu(self):
+    # ------------------------------------------------------------ OCR device (CPU / graphics card)
+    def _device_label(self):
+        from . import gpus, local_ocr
+        s = self.s
+        if not s["local_gpu"] or not local_ocr.gpu_name():
+            return "CPU"
+        card = next((g for g in gpus.cached() or [] if g["id"] == int(s["local_gpu_id"])), None)
+        return gpus.short_name(card["name"], 18) if card else "GPU"
+
+    def _device_rows(self):
+        """CPU + every graphics card found. Shared by the toolbar menu and ⚙."""
+        from . import gpus, local_ocr
+        s, a = self.s, self.app
+        has_dml = bool(local_ocr.gpu_name())
+        on_gpu = bool(s["local_gpu"]) and has_dml
+        cur = int(s["local_gpu_id"] or 0)
+        rows = [("item", "CPU", not on_gpu, lambda: a.set_ocr_device(None), None)]
+        if not has_dml:
+            rows.append(("header", "No GPU support installed"))
+            return rows
+        cards = gpus.cached()
+        if cards is None:  # not read yet (it is done late at start): read it now that the menu needs it
+            gpus.load(on_done=lambda: self.app.q.put(("gpus",)))
+        if cards is None:
+            rows.append(("header", "Looking for graphics cards…"))
+        elif not cards:  # the list could not be read: the Windows default card still works
+            rows.append(("item", "Default graphics card", on_gpu and cur == 0, lambda: a.set_ocr_device(0), None))
+        else:
+            for g in cards:
+                kind = "dedicated" if g["mb"] >= 1024 else "integrated"
+                rows.append(("item", gpus.short_name(g["name"], 30), on_gpu and cur == g["id"],
+                             lambda i=g["id"]: a.set_ocr_device(i), kind))
+        return rows
+
+    def refresh_menu(self):
+        """Rebuild the open menu (something it shows has just changed, e.g. the list of graphics cards)."""
+        try:
+            if self.menu and not self.menu.closed:
+                self.menu.refresh()
+        except Exception:
+            log.exception("Could not refresh the menu")
+
+    def open_preset_menu(self):
+        """Pick a preset (the one in use keeps every change by itself), create one, rename / delete it."""
         if self.menu:
             self.menu.close()
             return
-        s = self.s
-        from . import local_ocr
-        gpu = local_ocr.gpu_name() if s["local_gpu"] else ""
-        mode = s.read_mode()
-        modes = [("header", "Mode"),
-                 ("item", "AI · reads and translates", mode == "ai", lambda: self.app.set_read_mode("ai"),
-                  SERVER_SHORT.get(s["server"], "")),
-                 ("item", "Local OCR + AI translation", mode == "local_ai",
-                  lambda: self.app.set_read_mode("local_ai"), gpu or "CPU"),
-                 ("item", "Local OCR + Google Translate", mode == "local_google",
-                  lambda: self.app.set_read_mode("local_google"), "no key"),
-                 ("sep",),
-                 ("item", "Local OCR models…", False, self.open_local_dialog, None),
-                 ("item", "Test Google Translate", False, self.app.test_google, None),
-                 ("col",)]
-        items = [("header", "AI server" + (" · only if Google fails" if mode == "local_google" else ""))]
-        for srv in ("gemini", "cloudflare"):
-            has_key = {"gemini": bool(str(s["gemini_api_key"]).strip()),
-                       "cloudflare": bool(str(s["cf_api_token"]).strip() and str(s["cf_account_id"]).strip())}[srv]
-            items.append(("item", SERVER_NAMES[srv], s["server"] == srv,
-                          (lambda v=srv: self.app.set_server(v)) if has_key else (lambda v=srv: self.open_api_dialog(v)),
-                          "" if has_key else "no key"))
-        items += [("sep",), ("header", "Model · " + SERVER_SHORT.get(s["server"], s["server"]))]
-        cur = s[f"{s['server']}_model"]
-        for m in s[f"{s['server']}_models"] or []:
-            items.append(("item", m, m == cur, lambda v=m: self.app.set_model(v), None))
-        items += [("sep",),
-                  ("item", "Auto-switch model when busy", bool(s["auto_switch_model"]),
-                   lambda: self.app.toggle_setting("auto_switch_model"), None),
-                  ("item", "Auto-switch server when out of quota", bool(s["auto_switch_server"]),
-                   lambda: self.app.toggle_setting("auto_switch_server"), None),
-                  ("sep",),
-                  ("item", "API keys & models…", False, self.open_api_dialog, None)]
-        self._popup(modes + items, self.btn_server)
+        from . import presets
+        s, a = self.s, self.app
+        anchor = self._anchor(self.btn_preset)
+        act = presets.active(s)
+        rows = [("item", p["name"], p["name"] == act, lambda n=p["name"]: a.apply_preset(n), None, "close")
+                for p in presets.all_(s)]
+        rows += [("sep",), ("item", "Create new preset", False, lambda: a.create_preset(anchor), None, "close")]
+        if act != presets.DEFAULT:
+            rows += [("item", f"Rename “{act}”", False, lambda: a.rename_preset(act, anchor), None, "close"),
+                     ("item", f"Delete “{act}”", False, lambda: a.delete_preset(act, anchor), None, "close")]
+        self._popup(rows, self.btn_preset)
 
-    def open_settings_menu(self):
-        """Settings stay open while you change them; ⚙ again, Esc or a click outside closes."""
+    def open_server_menu(self):
+        """Who reads and who translates. Short: the AI's server / model / auto-switch share one submenu.
+        Stays open while you pick (like Settings); a click outside, Esc or the button again closes."""
         if self.menu:
             self.menu.close()
             return
         s, a = self.s, self.app
-        names = {"auto": "Any (auto detect)", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "en": "English"}
-        short = {"auto": "Any", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "en": "English"}
+
+        def ai():
+            srv = s["server"]
+            rows = [("header", "Server")]
+            for k in ("gemini", "cloudflare"):
+                has_key = {"gemini": bool(str(s["gemini_api_key"]).strip()),
+                           "cloudflare": bool(str(s["cf_api_token"]).strip() and str(s["cf_account_id"]).strip())}[k]
+                rows.append(("item", SERVER_NAMES[k], srv == k,
+                             (lambda v=k: a.set_server(v)) if has_key else (lambda v=k: self.open_api_dialog(v)),
+                             "" if has_key else "no key", None if has_key else "close"))
+            rows += [("sep",), ("header", "Model")]
+            cur = s[f"{srv}_model"]
+            rows += [("item", m, m == cur, lambda v=m: a.set_model(v), None) for m in s[f"{srv}_models"] or []]
+            rows += [("sep",),
+                     ("item", "Switch model when busy", bool(s["auto_switch_model"]),
+                      lambda: a.toggle_setting("auto_switch_model"), None),
+                     ("item", "Switch server when out of quota", bool(s["auto_switch_server"]),
+                      lambda: a.toggle_setting("auto_switch_server"), None),
+                     ("sep",),
+                     ("item", "API keys", False, self.open_api_dialog, None, "close")]
+            return rows
+
+        def top():
+            mode, srv = s.read_mode(), s["server"]
+            label = f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}"
+            rows = [("item", "AI reads and translates", mode == "ai", lambda: a.set_read_mode("ai"), None),
+                    ("item", "Local OCR + AI translation", mode == "local_ai", lambda: a.set_read_mode("local_ai"), None),
+                    ("item", "Local OCR + Google Translate", mode == "local_google",
+                     lambda: a.set_read_mode("local_google"), "no key"),
+                    ("sep",),
+                    ("sub", "AI (backup)" if mode == "local_google" else "AI", label, ai)]
+            if mode != "ai":
+                rows += [("sub", "OCR device", self._device_label(), self._device_rows),
+                         ("item", "OCR models", False, self.open_local_dialog, None, "close")]
+            return rows
+        self._popup(top, self.btn_server, persistent=True)
+
+    def open_settings_menu(self):
+        """Settings stay open while you change them; ⚙ again, Esc or a click outside closes.
+        Six short rows; everything else is one level down."""
+        if self.menu:
+            self.menu.close()
+            return
+        from . import langs
+        s, a = self.s, self.app
 
         def region():
             return s["capture_mode"] == "region" and s["region"]
-
-        def mode():
-            return [("item", "Auto · translate after scrolling", s["mode"] == "auto", lambda: a.set_mode("auto"), None),
-                    ("item", "Hotkey only", s["mode"] == "hotkey", lambda: a.set_mode("hotkey"),
-                     pretty(s["hotkey_translate"]))]
 
         def order():
             return [("item", "Manga · right → left", s["layout"] == "manga", lambda: a.set_layout("manga"), None),
                     ("item", "Webtoon · left → right", s["layout"] == "webtoon", lambda: a.set_layout("webtoon"), None),
                     ("item", "Visual novel · text box", s["layout"] == "vn", lambda: a.set_layout("vn"), None)]
 
-        def capture():
-            return [("item", "Browser page", not region(), lambda: a.set_capture("window"), None),
-                    ("item", "My frame", bool(region()), lambda: a.set_capture("region"),
+        def scanning():
+            if s["layout"] == "vn":
+                r = s["vn_region"]
+                return [("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
+                         pretty(s["hotkey_vn_auto"])),
+                        ("sep",),
+                        ("item", "Text box frame", False, a.select_region,
+                         f"{r[2]}×{r[3]}" if r else "not drawn", "close")]
+            return [("item", "Auto · after scrolling stops", s["mode"] == "auto", lambda: a.set_mode("auto"), None),
+                    ("item", "Hotkey only", s["mode"] == "hotkey", lambda: a.set_mode("hotkey"),
+                     pretty(s["hotkey_translate"])),
+                    ("sep",),
+                    ("item", "Capture the browser page", not region(), lambda: a.set_capture("window"), None),
+                    ("item", "Capture my frame", bool(region()), lambda: a.set_capture("region"),
                      f"{s['region'][2]}×{s['region'][3]}" if s["region"] else "not drawn",
                      None if s["region"] else "close"),
-                    ("sep",),
-                    ("item", "Draw a new frame…", False, a.select_region, "Alt+Shift+R", "close")]
+                    ("item", "Draw a new frame", False, a.select_region, pretty(s["hotkey_region"]), "close")]
 
         def language():
-            return [("item", names[c], s["source_lang"] == c, lambda c=c: a.set_source_lang(c), None)
-                    for c in ("auto", "ja", "ko", "zh", "en")]
+            rows = [("header", "From")]
+            rows += [("item", lab, s["source_lang"] == code, lambda c=code: a.set_source_lang(c), None)
+                     for code, lab, _ in langs.SOURCES]
+            rows += [("col",), ("header", "To")]
+            cur = langs.target(s["target_lang"])[0]
+            rows += [("item", lab, cur == name, lambda n=name: a.set_target_lang(n), None)
+                     for name, lab, *_ in langs.TARGETS]
+            return rows
 
-        def text():
+        def look():
             fam = s["font_family"]
-            return [("item", "Font…", False, self.open_font_picker, fam if len(fam) <= 16 else fam[:15] + "…", "close"),
-                    ("sep",),
+            rows = [("item", "Font", False, self.open_font_picker, fam if len(fam) <= 16 else fam[:15] + "…", "close"),
                     ("entry", "Minimum size", s["font_min"], a.set_font_size, "px"),
-                    ("sep",),
-                    ("item", "Text colour…", False,
+                    ("item", "Auto text size", bool(s["auto_text_size"]), a.toggle_auto_text_size, "up to 1.6×"),
+                    ("item", "Text colour", False,
                      lambda: a.pick_overlay_color("overlay_fg", "Translated text colour"), s["overlay_fg"], "close"),
-                    ("item", "Background colour…", False,
+                    ("item", "Box colour", False,
                      lambda: a.pick_overlay_color("overlay_bg", "Translated box background"), s["overlay_bg"], "close"),
-                    ("entry", "Background opacity", s["overlay_opacity"], a.set_overlay_opacity, "%"),
-                    ("entry", "Background blur", s["overlay_blur"], a.set_overlay_blur, "px"),
-                    ("item", "Reset look", False, a.reset_overlay_colors, None),
-                    ("sep",),
-                    ("item", "VN: use the game's box colour", bool(s["vn_game_colors"]), a.toggle_vn_colors, None),
-                    ("item", "Hide box under the mouse", bool(s["hover_hide"]), a.toggle_hover_hide, None),
-                    ("item", "Show overlay in screenshots", bool(s["overlay_in_screenshots"]),
-                     a.toggle_overlay_capture, None)]
+                    ("item", "Box colour from the page", bool(s["vn_game_colors"]), a.toggle_vn_colors, None)]
+            if s["layout"] == "vn":  # see-through boxes are for visual novels only
+                rows += [("entry", "Box opacity", s["overlay_opacity"], a.set_overlay_opacity, "%"),
+                         ("entry", "Box blur", s["overlay_blur"], a.set_overlay_blur, "px")]
+            rows += [("sep",),
+                     ("item", "Hide the box under the mouse", bool(s["hover_hide"]), a.toggle_hover_hide, None),
+                     ("item", "Show in screenshots", bool(s["overlay_in_screenshots"]), a.toggle_overlay_capture, None),
+                     ("item", "Reset look", False, a.reset_overlay_colors, None)]
+            return rows
 
-        def read_aloud():
-            return [("item", "Read translation aloud", bool(s["tts_enabled"]), a.toggle_tts, None),
-                    ("sep",),
+        def speech():
+            return [("item", "Read the translation aloud", bool(s["tts_enabled"]), a.toggle_tts, None),
                     ("entry", "Speed", s["tts_speed"], a.set_tts_speed, "%"),
                     ("entry", "Volume", s["tts_volume"], a.set_tts_volume, "%"),
                     ("item", "Test voice", False, a.test_tts, None)]
 
+        def more():
+            def key(label, name):
+                return ("item", label, False,
+                        lambda: a.open_key_dialog(name, label.rstrip("…"), self._anchor(self.btn_settings)),
+                        pretty(s[name]), "close")
+            rows = [("header", "Keys"), key("Translate key", "hotkey_translate")]
+            if s["layout"] == "vn":
+                rows.append(key("Auto-scan key", "hotkey_vn_auto"))
+            rows += [key("Show / hide toolbar key", "hotkey_toolbar"),
+                     ("sep",),
+                     ("item", "Keep translation record", bool(s["record_enabled"]), a.toggle_record, None),
+                     ("item", "Open translation record", False, a.open_record, None, "close"),
+                     ("item", "Show in taskbar", bool(s["taskbar_icon"]), a.toggle_taskbar_icon, None),
+                     ("item", "Developer mode", bool(s["developer_mode"]), a.toggle_developer_mode, "visible to OBS"),
+                     ("sep",),
+                     ("item", "API keys & models", False, self.open_api_dialog, None, "close")]
+            return rows
+
         def top():
             layout = {"manga": "Manga", "webtoon": "Webtoon", "vn": "Visual novel"}.get(s["layout"], "Manga")
-            keys = [("item", "Translate key…", False,
-                     lambda: a.open_key_dialog("hotkey_translate", "Translate key", self._anchor(self.btn_settings)),
-                     pretty(s["hotkey_translate"]), "close")]
             if s["layout"] == "vn":
-                r = s["vn_region"]
-                rows = [
-                    ("sub", "Reading order", layout, order),
-                    ("sub", "Source language", short.get(s["source_lang"], s["source_lang"]), language),
-                    ("item", "Text box frame…", False, a.select_region,
-                     f"{r[2]}×{r[3]}" if r else "not drawn", "close"),
-                    ("sub", "Text", f"{s['font_min']} px", text),
-                    ("sep",),
-                    ("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
-                     pretty(s["hotkey_vn_auto"])),
-                ]
-                keys.append(("item", "Auto-scan key…", False,
-                             lambda: a.open_key_dialog("hotkey_vn_auto", "Auto-scan key", self._anchor(self.btn_settings)),
-                             pretty(s["hotkey_vn_auto"]), "close"))
+                scan = "Auto" if s["vn_auto"] else "Manual"
             else:
-                rows = [
-                    ("sub", "Mode", "Auto" if s["mode"] == "auto" else "Hotkey", mode),
-                    ("sub", "Reading order", layout, order),
-                    ("sub", "Source language", short.get(s["source_lang"], s["source_lang"]), language),
-                    ("sub", "Capture", "My frame" if region() else "Browser page", capture),
-                    ("sub", "Text", f"{s['font_min']} px", text),
-                ]
-            # Hiding / showing is done by this key and by the tray icon; here only the key is changed
-            keys.append(("item", "Show / hide toolbar key…", False,
-                         lambda: a.open_key_dialog("hotkey_toolbar", "Show / hide toolbar key",
-                                                   self._anchor(self.btn_settings)),
-                         pretty(s["hotkey_toolbar"]), "close"))
-            return rows + keys + [("sep",),
-                                  ("item", "Keep translation record", bool(s["record_enabled"]), a.toggle_record, None),
-                                  ("item", "Open translation record", False, a.open_record, "record-lazyk.txt", "close"),
-                                  ("sub", "Read aloud", "On" if s["tts_enabled"] else "Off", read_aloud),
-                                  ("item", "Show in taskbar", bool(s["taskbar_icon"]), a.toggle_taskbar_icon, None),
-                                  ("item", "Developer mode (show tool when recording)", bool(s["developer_mode"]),
-                                   a.toggle_developer_mode, None),
-                                  ("item", "API keys & models…", False, self.open_api_dialog, None, "close")]
+                scan = ("Auto" if s["mode"] == "auto" else "Hotkey") + (" · frame" if region() else "")
+            return [("sub", "Reading order", layout, order),
+                    ("sub", "Scanning", scan, scanning),
+                    ("sub", "Language", f"{langs.source_short(s['source_lang'])} → {langs.short(s['target_lang'])}",
+                     language),
+                    ("sub", "Look", f"{s['font_min']} px", look),
+                    ("sub", "Text to speech", "On" if s["tts_enabled"] else "Off", speech),
+                    ("sep",),
+                    ("sub", "More", "", more)]
         self._popup(top, self.btn_settings, persistent=True)
 
     def _menu_closed(self):

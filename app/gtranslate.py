@@ -5,7 +5,9 @@ Each bubble is translated on its own (4 at a time), so there is no story context
 """
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -15,9 +17,63 @@ from .api import Cancelled
 log = logging.getLogger(__name__)
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
-TARGETS = {"vietnamese": "vi", "english": "en", "japanese": "ja", "korean": "ko", "chinese": "zh-CN"}
 SOURCES = {"auto": "auto", "ja": "ja", "ko": "ko", "zh": "zh-CN", "en": "en"}
 _rest_until = {}  # endpoint -> time it may be used again (blocked: 429/403 -> 5 min)
+_session = None
+_session_lock = threading.Lock()
+_cache = OrderedDict()  # (text, sl, tl) -> translation: the same line is never sent twice
+_cache_lock = threading.Lock()
+CACHE_MAX = 500
+BATCH_CHARS = 1800   # characters per request: a whole page usually goes in ONE request
+_last_used = [0.0]   # when Google last answered: an idle connection is reopened before the next page
+_batch_ok = [True]   # False once the endpoint refused several lines in one request: one per line then
+
+
+def _sess():
+    """One shared session: the connection to Google stays open between lines, so a translation does not
+    pay for a new TCP + TLS handshake every time (usually 100-300 ms)."""
+    global _session
+    with _session_lock:
+        if _session is None:
+            from requests.adapters import HTTPAdapter
+            s = requests.Session()
+            s.headers["User-Agent"] = UA
+            s.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=4))
+            _session = s
+        return _session
+
+
+def _reset_session():
+    global _session
+    with _session_lock:
+        if _session is not None:
+            try:
+                _session.close()
+            except Exception:
+                pass
+        _session = None
+
+
+def prewarm(idle_s=20):
+    """A page is being scanned: if the connection to Google may have gone idle, reopen it now (in the
+    background), so the translation does not wait for a new TLS handshake."""
+    if time.time() - _last_used[0] > idle_s:
+        warm()
+
+
+def warm():
+    """Open the connection in the background (call at start), so the first translation is not slower."""
+    _last_used[0] = time.time()
+
+    def work():
+        from . import winapi
+        winapi.lower_this_thread()
+        try:
+            _sess().get("https://clients5.google.com/translate_a/t",
+                        params={"client": "dict-chrome-ex", "sl": "en", "tl": "vi", "q": "a"}, timeout=8)
+        except Exception as e:  # noqa: BLE001
+            log.info("Google warm-up skipped: %s", e)
+    threading.Thread(target=work, daemon=True).start()
 
 
 class TranslateError(Exception):
@@ -53,16 +109,18 @@ def _get(name, url, params):
         raise TranslateError(f"{name} is resting after a block")
     for attempt in range(2):
         try:
-            r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=8)
+            r = _sess().get(url, params=params, timeout=8)
         except requests.RequestException as e:
+            # a kept-open connection the server already closed fails once: retry at once on a fresh one
+            _reset_session()
             if attempt:
                 raise TranslateError("Google Translate: network error") from e
-            time.sleep(1)
             continue
         if r.status_code in (403, 429):
             _rest_until[name] = time.time() + 300
         if not r.ok:
             raise TranslateError(f"Google Translate: HTTP {r.status_code}")
+        _last_used[0] = time.time()
         try:
             return r.json()
         except ValueError:
@@ -83,10 +141,60 @@ def _one(text, sl, tl):
         return _first_text(data)
 
 
+def _batch(texts, sl, tl):
+    """Several lines in ONE request (repeated q=): one round trip for a whole page instead of one per
+    bubble. Raises TranslateError when the answer does not have one translation per line."""
+    params = [("client", "dict-chrome-ex"), ("sl", sl), ("tl", tl)] + [("q", t) for t in texts]
+    data = _get("google", "https://clients5.google.com/translate_a/t", params)
+    if isinstance(data, list) and len(data) == len(texts):
+        out = [d if isinstance(d, str) else _first_text(d) for d in data]
+        if all(isinstance(x, str) for x in out):
+            return out
+    raise TranslateError(f"batch answer has a different shape ({type(data).__name__}, "
+                         f"{len(data) if isinstance(data, list) else '-'} for {len(texts)})")
+
+
+def _groups(idx, texts):
+    """Split line indexes into requests of at most BATCH_CHARS characters."""
+    groups, cur, size = [], [], 0
+    for i in idx:
+        n = len(texts[i]) + 3
+        if cur and size + n > BATCH_CHARS:
+            groups.append(cur)
+            cur, size = [], 0
+        cur.append(i)
+        size += n
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _translate_many(todo, texts, sl, tl):
+    """Translations for the lines in `todo` (indexes into texts), as few requests as possible."""
+    if len(todo) == 1:
+        return [_one(texts[todo[0]], sl, tl)]
+    if _batch_ok[0] and _rest_until.get("google", 0) <= time.time():
+        groups = _groups(todo, texts)
+        try:
+            if len(groups) == 1:
+                parts = [_batch([texts[i] for i in groups[0]], sl, tl)]
+            else:
+                with ThreadPoolExecutor(max_workers=min(4, len(groups))) as ex:
+                    parts = list(ex.map(lambda g: _batch([texts[i] for i in g], sl, tl), groups))
+            return [t for part in parts for t in part]
+        except TranslateError as e:
+            if "shape" in str(e):
+                _batch_ok[0] = False  # this endpoint does not batch: stop trying for this session
+            log.info("Google batch failed (%s), one request per line", e)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        return list(ex.map(lambda i: _one(texts[i], sl, tl), todo))
+
+
 def translate(lines, source_lang, target_lang, cancel=None):
     """lines -> translated lines (same length; an empty line stays empty)."""
     sl = SOURCES.get(source_lang, "auto")
-    tl = TARGETS.get(str(target_lang).strip().lower(), "vi")
+    from .langs import google_code
+    tl = google_code(target_lang)
     texts = [_prepare(l) for l in lines]
     todo = [i for i, t in enumerate(texts) if t]
     out = [""] * len(lines)
@@ -94,10 +202,24 @@ def translate(lines, source_lang, target_lang, cancel=None):
         return out
     if cancel is not None and cancel.is_set():
         raise Cancelled()
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        got = list(ex.map(lambda i: _one(texts[i], sl, tl), todo))
-    for i, t in zip(todo, got):
-        out[i] = (t or "").strip()
+    with _cache_lock:
+        for i in todo:
+            hit = _cache.get((texts[i], sl, tl))
+            if hit:
+                out[i] = hit
+                _cache.move_to_end((texts[i], sl, tl))
+    todo = [i for i in todo if not out[i]]
+    if todo:
+        t0 = time.time()
+        got = _translate_many(todo, texts, sl, tl)
+        log.info("Google: %d line(s) in %.2fs", len(todo), time.time() - t0)
+        with _cache_lock:
+            for i, t in zip(todo, got):
+                out[i] = (t or "").strip()
+                if out[i]:
+                    _cache[(texts[i], sl, tl)] = out[i]
+            while len(_cache) > CACHE_MAX:
+                _cache.popitem(last=False)
     if not any(out):
         raise TranslateError("Google Translate returned nothing")
     return out

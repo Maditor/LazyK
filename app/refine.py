@@ -268,3 +268,49 @@ def refine_any(gray, inv, box):
             r[2]["fill"] = 255 - r[2].get("fill", 255)
             return r
     return None
+
+
+def item_colors(rgb: np.ndarray, box, min_ring: int = 3):
+    """(background, ink) hex colours for the text at `box` (x1, y1, x2, y2) of an RGB image.
+
+    The background is read from a ring just outside the tight text box - that is the bubble's paper, the
+    caption box or the art behind free text, never the strokes themselves. Outliers (a bubble outline,
+    a bit of art) are ignored: the median is refined with the pixels close to it. Ink is white on dark
+    backgrounds and near-black on light ones. None when the box is unusable."""
+    H, W = rgb.shape[:2]
+    x1, y1, x2, y2 = [int(round(v)) for v in box]
+    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(W, x2), min(H, y2)
+    bw, bh = x2 - x1, y2 - y1
+    if bw < 2 or bh < 2:
+        return None
+    gap = 1
+    ring = max(min_ring, int(0.2 * min(bw, bh)))
+    pad = gap + ring
+    ox1, oy1, ox2, oy2 = max(0, x1 - pad), max(0, y1 - pad), min(W, x2 + pad), min(H, y2 + pad)
+    outer = rgb[oy1:oy2, ox1:ox2]
+    mask = np.ones(outer.shape[:2], bool)
+    mask[max(0, y1 - gap - oy1):y2 + gap - oy1, max(0, x1 - gap - ox1):x2 + gap - ox1] = False
+    px = outer[mask]
+    if len(px) < 12:  # the box fills the image: fall back to the box itself
+        px = rgb[y1:y2, x1:x2].reshape(-1, 3)
+    px = px.astype(np.float32)
+    med = np.median(px, axis=0)
+    close = px[np.abs(px - med).sum(axis=1) <= 60]
+    col = close.mean(axis=0) if len(close) >= 0.3 * len(px) else med
+    r, g, b = (int(round(float(v))) for v in col)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#{:02x}{:02x}{:02x}".format(r, g, b), ("#ffffff" if lum < 140 else "#111111")
+
+
+def attach_colors(img, items):
+    """Give every item its own box colours (item["colors"]) so the overlay can match the page - manga,
+    webtoon and visual novel alike. Items whose colours cannot be read keep none (user colours apply)."""
+    rgb = np.asarray(img.convert("RGB"))
+    for it in items:
+        try:
+            c = item_colors(rgb, it["box"]) if it.get("box") else None
+        except Exception:
+            log.exception("Could not read the background colour")
+            c = None
+        if c:
+            it["colors"] = c

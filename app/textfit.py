@@ -247,7 +247,8 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
     pad = settings["box_padding"] * scale
     # font_min is the user's reading size: text never gets smaller than it, only bigger in roomy bubbles
     fmin = max(6, round(settings["font_min"] * scale))
-    fmax = max(fmin, round(settings["font_min"] * 1.6 * scale))  # roomy bubbles: up to 1.6x
+    # roomy bubbles: up to 1.6x; "Auto text size" off = always the minimum size (steady, and faster to lay out)
+    fmax = max(fmin, round(settings["font_min"] * 1.6 * scale)) if settings["auto_text_size"] else fmin
     floor = fmin
     inner = 3 * scale
     gap = 2 * scale
@@ -269,12 +270,15 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                       or fit_shape(text, shape, fmin, fmin, 0.5, metrics, strict=False))
         if placed:
             size, lines = placed
-            fill, ink = bubble_colors(shape, settings)
+            if it.get("colors") and settings["vn_game_colors"]:  # auto colour: the bubble's own paper
+                fill, ink = it["colors"]
+            else:
+                fill, ink = bubble_colors(shape, settings)
             out.append({"kind": "poly", "poly": shape["poly"], "rect": tuple(it["bubble"]),
                         "size": size, "lines": lines, "fill": fill, "ink": ink})
             blocked.append(tuple(it["bubble"]))
         else:
-            if it.get("colors") and settings["vn_game_colors"]:  # visual novel: the game's own box colour
+            if it.get("colors") and settings["vn_game_colors"]:  # auto colour: the box / bubble's own colour (all layouts)
                 colors = tuple(it["colors"])
             else:
                 colors = bubble_colors(shape, settings) if shape else (settings["overlay_bg"], settings["overlay_fg"])

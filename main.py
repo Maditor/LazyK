@@ -73,10 +73,15 @@ def main():
     ap = argparse.ArgumentParser(description="LazyK")
     ap.add_argument("--demo", action="store_true", help="show calibration boxes, no API")
     ap.add_argument("--image", help="translate one image file and save a preview")
+    ap.add_argument("--list-gpus", metavar="FILE", help=argparse.SUPPRESS)  # used by the app: lists graphics cards
     ap.add_argument("--tts", metavar="TEXT", help="read TEXT aloud with the configured voice, then exit")
     args = ap.parse_args()
 
     fix_streams()
+    if args.list_gpus:  # child process of the OCR device menu: no logging, no settings, no window
+        from app import gpus
+        gpus.write_listing(args.list_gpus)
+        return
     setup_logging()
     settings = Settings()
     logging.info("Start (settings: %s)", settings.path)

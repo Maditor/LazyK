@@ -8,14 +8,14 @@
 
 ---
 
-- LazyK là công cụ cho **Windows** giúp bạn đọc Comics/Webtoon **ngay trên trình duyệt** mà không cần chờ bản dịch. Bạn cứ cuộn trang như bình thường, LazyK sẽ:
+LazyK là công cụ cho **Windows** giúp bạn đọc manga, manhwa, manhua, truyện tranh tiếng Anh **ngay trên trình duyệt** mà không cần chờ bản dịch. Bạn cứ cuộn trang như bình thường, LazyK sẽ:
 
 1. chụp phần trang truyện đang hiện trên màn hình,
 2. đọc chữ trong các bóng thoại bằng AI (Google Gemini hoặc Cloudflare Workers AI),
 3. dịch cả trang sang **tiếng Việt**,
 4. **tẩy chữ gốc và viết chữ dịch** vào đúng bóng thoại, như một bản scan đã được dịch sẵn.
 
-- LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Đọc to bản dịch](#đọc-to-bản-dịch)).
+Không chỉ truyện tranh: LazyK còn dịch **visual novel và game có hộp thoại** ngay trên màn hình (xem [Chế độ Visual novel](#chế-độ-visual-novel)), và có thể **đọc to bản dịch** bằng giọng nói (xem [Text to speech](#text-to-speech)).
 
 > 🇬🇧 **English summary:** LazyK is a Windows overlay that captures the comic page in your browser, reads the speech bubbles with Gemini / Cloudflare AI, translates the whole page (to Vietnamese by default) and paints the translation over the original bubbles. It also translates **visual novels / games with a dialogue box** line by line, can **read the translation aloud** (Edge neural voices, adjustable speed and volume) and keeps a temporary **record of the session's translations**. You need Python 3.11+ (or the prebuilt `.exe`) and a free Gemini API key.
 
@@ -41,7 +41,7 @@
 | Hệ điều hành | Windows 10 (bản 2004 trở lên) hoặc Windows 11 |
 | Python | 3.11 trở lên *(không cần nếu dùng bản `.exe` ở mục Releases)* |
 | API key | Google Gemini (**miễn phí**) và/hoặc Cloudflare Workers AI |
-| Mạng | Cần có để cài thư viện và gọi AI (và để dùng giọng đọc nếu bật *Read aloud*) |
+| Mạng | Cần có để cài thư viện và gọi AI (và để dùng giọng đọc nếu bật *Text to speech*) |
 
 Không cần card đồ hoạ mạnh: mặc định mọi xử lý AI đều chạy trên máy chủ của Google / Cloudflare. Nếu bật **Local OCR**, việc đọc chữ chạy trên máy bạn (CPU, hoặc card đồ hoạ qua DirectML nếu có).
 
@@ -103,7 +103,7 @@ Không cần card đồ hoạ mạnh: mặc định mọi xử lý AI đều ch�
 2. Vào **[API Tokens](https://dash.cloudflare.com/profile/api-tokens)** → **Create Token** → mẫu **Workers AI**, rồi sao chép token.
 
 ### Nhập key vào LazyK
-Lần chạy đầu, cửa sổ **API & Models** tự mở ra (sau này mở lại bằng nút ⚙ → *API keys & models…*):
+Lần chạy đầu, cửa sổ **API & Models** tự mở ra (sau này mở lại bằng nút ⚙ → *API keys & models*):
 1. Chọn tab **Google Gemini**, dán key.
 2. Bấm **Test connection**; thấy ✓ xanh là được.
 3. Bấm **Save**.
@@ -130,7 +130,7 @@ Chấm tròn trên thanh công cụ cho biết LazyK đang làm gì:
 | Nút | Chức năng |
 |---|---|
 | `⋮⋮` / logo | Kéo để di chuyển thanh (vị trí được nhớ lại) |
-| **Gemini · …▾** | Chọn server AI và model; bật/tắt tự đổi model / server. Cột *Mode* chọn ai đọc và ai dịch (nút hiện **Gemini · …**, **Local + Gemini** hoặc **Local + Google**) |
+| **Gemini · …▾** | Menu gọn một cột: chọn ai đọc và ai dịch (nút hiện **Gemini · …**, **Local + Gemini** hoặc **Local + Google**). **OCR device** chọn CPU hay card đồ hoạ; **AI server**, **Model**, **Auto-switch** là các menu con |
 | **↻** | Dịch ngay trang đang xem |
 | **❚❚** | Tạm dừng / chạy lại |
 | **👁** | Ẩn / hiện bản dịch |
@@ -143,67 +143,80 @@ Chấm tròn trên thanh công cụ cho biết LazyK đang làm gì:
 
 | Phím | Chức năng |
 |---|---|
-| `Alt + T` | Dịch ngay (đổi được ở ⚙ → Translate key…) |
+| `Alt + T` | Dịch ngay (đổi được ở ⚙ → Hotkeys → Translate key) |
 | `Esc` | Ẩn bản dịch |
 | `Alt + Shift + T` | Tạm dừng / chạy lại |
 | `Alt + Shift + A` | Đổi chế độ Auto ↔ Hotkey |
 | `Alt + Shift + R` | Kéo khung chọn vùng |
-| `Alt + Shift + V` | Visual novel: bật / tắt tự quét khi chữ đổi (đổi được ở ⚙ → Auto-scan key…) |
+| `Alt + Shift + V` | Visual novel: bật / tắt tự quét khi chữ đổi (đổi được ở ⚙ → Hotkeys → Auto-scan key) |
 | `Ctrl + Alt + Q` | Thoát |
+
+### Preset (cài đặt có sẵn)
+
+Ô **preset** trên thanh công cụ (mặc định ghi **Default**) giữ cả một bộ cài đặt dưới một cái tên; bấm chọn là đổi hết trong một lần. Tiện khi bạn đọc nhiều loại: ví dụ *Manga JP*, *Webtoon KR*, *Game VN*.
+
+* **Default** luôn có sẵn, không đổi tên và không xoá được.
+* **Tự lưu:** preset đang dùng tự giữ mọi thay đổi bạn chỉnh (font, ngôn ngữ, chế độ…), không cần bấm lưu. Chọn preset khác rồi quay lại thì mọi thứ vẫn như lần cuối bạn để.
+* **Create new preset:** lấy đúng cài đặt đang dùng làm preset mới, mở hộp nhỏ để đặt tên (**Save** / **Cancel**). Preset mới trở thành preset đang dùng; preset cũ giữ nguyên.
+* **Rename** / **Delete** cho preset đang dùng (trừ Default). Xoá preset đang dùng thì quay về Default.
+
+Một preset lưu: thứ tự đọc (Manga / Webtoon / Visual novel), chế độ Auto / Hotkey, khung chụp và khung hộp thoại VN, ngôn ngữ gốc và đích, ai đọc / ai dịch, server AI, thiết bị đọc chữ, font, cỡ chữ, *Auto text size*, màu chữ và màu ô, độ trong suốt / mờ, *Hide the box under the mouse*, và *Text to speech* (bật/tắt, tốc độ, âm lượng). Preset **không** lưu API key và phím tắt.
 
 ### Cài đặt (nút ⚙)
 
-Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấn `Esc` hoặc bấm ra ngoài để đóng.
+Menu cài đặt **luôn mở trong lúc bạn chỉnh**; bấm lại ⚙, nhấn `Esc` hoặc bấm ra ngoài để đóng. Mục nào có dấu `›` thì mở thêm một menu con bên cạnh.
 
 | Mục | Ý nghĩa |
 |---|---|
-| **Mode** | *Auto*: tự dịch khi dừng cuộn · *Hotkey only*: chỉ dịch khi bấm `Alt + T` |
 | **Reading order** | *Manga*: đọc phải → trái · *Webtoon*: đọc trái → phải · *Visual novel · text box*: dịch game visual novel (xem bên dưới) |
-| **Source language** | Ngôn ngữ gốc: Tự nhận / Nhật / Hàn / Trung / Anh |
-| **Capture** | Chụp *cả trang trình duyệt* hay chỉ *khung bạn đã kéo* |
-| **Text** | Font chữ, **cỡ chữ tối thiểu** (chữ dịch không bao giờ nhỏ hơn cỡ này), **màu chữ**, **màu nền**, *Hide box under the mouse* (rê chuột vào ô dịch thì ô đó tạm ẩn để xem phần bên dưới), hiện bản dịch trong ảnh chụp màn hình |
-| **Read aloud** | Đọc to bản dịch: bật / tắt, **Speed**, **Volume**, *Test voice* (xem [Đọc to bản dịch](#đọc-to-bản-dịch)) |
-| **Keep translation record** / **Open translation record** | Bật / tắt bản ghi dịch tạm và mở nó để xem (xem [Bản ghi dịch tạm](#bản-ghi-dịch-tạm)) |
-| **Translate key…** | Tự gán phím cho nút dịch: bấm một phím bất kỳ (`~`, `F8`, `Ctrl+Q`…) hoặc **nút phụ của chuột** (Mouse 4 / 5) hay bấm giữa chuột. Nút chuột đã gán sẽ không còn Back / Forward trong trình duyệt |
+| **Scanning** | Manga / Webtoon: *Auto* (tự dịch khi dừng cuộn) hay *Hotkey only*; chụp *cả trang trình duyệt* hay *khung bạn đã kéo*; *Draw a new frame*. Visual novel: *Auto-scan when text changes* và *Text box frame*. LazyK nhận ra trang đang cuộn bằng cả con lăn chuột lẫn cách nhìn trang dịch lên/xuống, nên touchpad, kéo thanh cuộn hay phím mũi tên đều được (tắt cách nhìn trang: `"scroll_watch": false` trong `settings.json`) |
+| **Language** | Hai cột: **From** (ngôn ngữ gốc: tự nhận / Nhật / Hàn / Trung / Anh) và **To** (ngôn ngữ đích: Việt, Anh, Nhật, Hàn, Trung giản thể / phồn thể, Thái, Indonesia, Tây Ban Nha, Pháp, Đức, Bồ Đào Nha, Nga). Giọng đọc *Text to speech* tự đổi theo ngôn ngữ đích |
+| **Look** | **Font**, **Minimum size** (chữ dịch không bao giờ nhỏ hơn cỡ này), *Auto text size* (bật: ô rộng thì chữ to dần, tối đa 1,6 lần · tắt: chữ luôn đúng *Minimum size*, cỡ chữ ổn định, hợp với Visual novel), **Text colour**, **Box colour**, *Box colour from the page* (lấy màu nền của bóng thoại / hộp thoại), độ trong suốt và độ mờ của ô (chỉ Visual novel), *Hide the box under the mouse*, *Show in screenshots*, *Reset look* |
+| **Text to speech** | Đọc to bản dịch: bật / tắt, **Speed**, **Volume**, *Test voice* (xem [Text to speech](#text-to-speech)) |
+| **More** | Phím tắt (**Translate key** gán phím bất kỳ hoặc nút phụ của chuột; **Auto-scan key**; **Show / hide toolbar key**), **Keep / Open translation record** (xem [Bản ghi dịch tạm](#bản-ghi-dịch-tạm)), *Show in taskbar*, *Developer mode*, **API keys & models** |
+
+Chọn **ai đọc, ai dịch** (AI / Local OCR / Google), server, model và thiết bị đọc chữ (CPU / card đồ hoạ) nằm ở **nút server** trên thanh công cụ, không nằm trong ⚙.
 
 ### Chế độ Visual novel
 
 ⚙ → **Reading order → Visual novel · text box**. Lần đầu tool bảo bạn kéo khung (⛶) **quanh hộp thoại của game**
 (kéo sát hộp thoại, không kéo cả màn hình: ảnh càng nhỏ càng nhanh). Khung này được nhớ riêng, không đè khung manga.
 
-* **Quét tay:** bấm phím dịch (mặc định `Alt + T`, hoặc phím / nút chuột Anh đã gán ở *Translate key…*).
-* **Tự quét khi chữ đổi:** bật ở ⚙ → *Auto-scan when text changes* hoặc phím `Alt + Shift + V`. Mặc định **tắt**.
+* **Quét tay:** bấm phím dịch (mặc định `Alt + T`, hoặc phím / nút chuột Anh đã gán ở *Translate key*).
+* **Tự quét khi chữ đổi:** bật ở ⚙ → *Scanning* → *Auto-scan when text changes* hoặc phím `Alt + Shift + V`. Mặc định **tắt**.
   Tool chỉ nhìn khung nhỏ vài lần mỗi giây và chỉ khi cửa sổ game đang ở trước; chữ đổi thì bản dịch cũ ẩn ngay,
   đợi chữ chạy xong (hiệu ứng typewriter) rồi mới quét một lần. Tắt đi là tool hoàn toàn không nhìn màn hình nữa.
-* Bản dịch phủ lên hộp thoại với **màu của chính hộp thoại** (tắt ở ⚙ → Text → *VN: use the game's box colour*).
+* Bản dịch phủ lên hộp thoại với **màu của chính hộp thoại** (tắt ở ⚙ → Look → *Box colour from the page*).
   Rê chuột vào để ẩn tạm và xem chữ gốc. Dòng đã dịch rồi lấy từ cache nên hiện gần như tức thì.
 * Game phải chạy **cửa sổ hoặc không viền** (borderless). Fullscreen độc quyền thì overlay không hiện lên trên được.
 * Khi Auto-scan đang bật, bản dịch **không xuất hiện trong ảnh chụp màn hình** (nếu không nó tự làm chữ đổi và quét lặp).
 * Trong chế độ này cuộn chuột / Space / PageDown **không** kích hoạt quét (VN dùng chúng để đọc tiếp).
-* Chỉnh sâu trong `settings.json`: `vn_poll_ms` (200), `vn_stable_ms` (350: tăng nếu game chạy chữ có đoạn ngắt),
+* **Nhanh nhất:** chọn *Local OCR + Google Translate* và để tốc độ chữ của game ở mức nhanh / tức thì (hiệu ứng chạy chữ là phần chờ lâu nhất). Log có dòng `VN: translation shown …s after the text stopped changing` để đo.
+* Chỉnh sâu trong `settings.json`: `vn_poll_ms` (100), `vn_stable_ms` (200, chế độ AI đọc ảnh tối thiểu 350: tăng nếu game chạy chữ có đoạn ngắt),
   `vn_change_pct` (0.3: tăng nếu có icon "bấm để tiếp" to và nhấp nháy làm tool tưởng chữ đổi).
 
-### Đọc to bản dịch
+### Text to speech
 
-Bật ở ⚙ → **Read aloud** → *Read translation aloud* (mặc định **tắt**). Sau khi dịch xong, LazyK đọc các bóng thoại theo thứ tự đọc bằng giọng thần kinh của Microsoft Edge (miễn phí, không cần API key).
+Bật ở ⚙ → **Text to speech** → *Read the translation aloud* (mặc định **tắt**). Sau khi dịch xong, LazyK đọc các bóng thoại theo thứ tự đọc bằng giọng thần kinh của Microsoft Edge (miễn phí, không cần API key).
 
-| Mục trong ⚙ → Read aloud | Ý nghĩa |
+| Mục trong ⚙ → Text to speech | Ý nghĩa |
 |---|---|
-| **Read translation aloud** | Bật / tắt đọc to |
+| **Read the translation aloud** | Bật / tắt đọc to |
 | **Speed** | Tốc độ đọc 50–200 % (100 = bình thường). Áp dụng cho các đoạn được tạo sau khi đổi |
 | **Volume** | Âm lượng 0–100 % so với âm lượng Windows (muốn to hơn thì tăng âm lượng hệ thống). Đổi là có hiệu lực từ đoạn kế tiếp |
 | **Test voice** | Đọc một câu mẫu. Gõ số vào Speed / Volume rồi Enter cũng đọc câu mẫu luôn |
 
 * **Dừng ngay** khi bạn cuộn trang, nhấn `Esc`, tạm dừng, ẩn bản dịch (👁) hoặc có bản dịch mới. Trang lấy lại từ cache (cuộn quay về) **không** đọc lại.
 * **Visual novel:** mỗi dòng thoại mới được đọc một lần (kèm tên nhân vật nếu có).
-* **Giọng đọc** tự chọn theo ngôn ngữ đích: tiếng Việt dùng `vi-VN-HoaiMyNeural` (nữ). Muốn giọng khác, sửa `tts_voice` trong `settings.json`, ví dụ `"vi-VN-NamMinhNeural"` (nam). Để `"auto"` thì tự chọn lại.
+* **Giọng đọc** tự chọn theo ngôn ngữ đích (⚙ → Language → To): tiếng Việt dùng `vi-VN-HoaiMyNeural` (nữ). Muốn giọng khác, sửa `tts_voice` trong `settings.json`, ví dụ `"vi-VN-NamMinhNeural"` (nam). Để `"auto"` thì tự chọn lại.
 * **Bắt đầu đọc nhanh:** câu dài được cắt thành các đoạn ngắn, đoạn đầu phát ngay trong khi các đoạn sau đang được tạo.
+* **Bắt đầu đọc nhanh:** ngay khi bắt đầu quét trang, LazyK mở sẵn kết nối tới dịch vụ giọng đọc và mở sẵn loa. Giọng được **phát ngay khi những gói âm thanh đầu tiên về tới** (không chờ tải xong cả câu), các câu nối tiếp nhau không bị ngắt quãng. Cần thư viện `miniaudio` (đã có trong `requirements.txt`, chạy lại `setup.bat`); thiếu thì LazyK tự dùng cách phát cũ.
 * **Cần Internet** (giọng được tạo trên dịch vụ của Microsoft) và thư viện `edge-tts` (đã nằm trong `requirements.txt`; chạy lại `setup.bat` nếu nâng cấp từ bản cũ). Mất mạng thì chỉ hiện một thông báo ngắn, phần dịch vẫn chạy bình thường.
 * **Thử giọng ngoài app:** `.venv\Scripts\python main.py --tts "Xin chào các bạn"`.
 
 ### Bản ghi dịch tạm
 
-Mỗi lần quét và dịch xong, **phần đã dịch** (không có chữ gốc) được ghi nối vào file **`record-lazyk.txt`**, nằm cạnh `settings.json`, để bạn xem lại những gì vừa đọc. Mở bằng ⚙ → **Open translation record**.
+Mỗi lần quét và dịch xong, **phần đã dịch** (không có chữ gốc) được ghi nối vào file **`record-lazyk.txt`**, nằm cạnh `settings.json`, để bạn xem lại những gì vừa đọc. Mở bằng ⚙ → More → **Open translation record**.
 
 ```
 === #1 · 07:59:47 ===
@@ -217,7 +230,7 @@ Một dòng thoại
 * Mỗi lần quét là một khối có số thứ tự và giờ; bóng thoại được đánh số theo thứ tự đọc.
 * Trang lấy lại từ cache và nội dung trùng với lần ghi trước **không** bị ghi lặp.
 * Đây là **file tạm của phiên làm việc**: bị xoá khi bạn thoát LazyK (✕, tray, `Ctrl + Alt + Q`, đóng cửa sổ taskbar) và được làm trống mỗi lần mở lại. Muốn giữ một đoạn thì chép ra chỗ khác trước khi thoát.
-* Tắt hẳn ở ⚙ → *Keep translation record* (khoá `record_enabled` trong `settings.json`).
+* Tắt hẳn ở ⚙ → More → *Keep translation record* (khoá `record_enabled` trong `settings.json`).
 
 ### Kéo khung chọn vùng (⛶)
 Hữu ích khi trang đọc truyện có menu, bình luận hoặc nền rối bên cạnh. Bấm **⛶**, màn hình tối lại, **kéo một khung ôm sát trang truyện** rồi thả chuột. Từ đó LazyK chỉ đọc trong khung này, kể cả sau khi mở lại. Muốn bỏ khung: ⚙ → *Capture* → *Browser page*.
@@ -237,7 +250,7 @@ Bấm nút server trên thanh công cụ, cột **Mode** có 3 lựa chọn:
 
 ### Local OCR (đọc chữ ngay trên máy)
 
-Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
+Mục **Local OCR models** trong menu mở cửa sổ quản lý model:
 
 | Model | Dung lượng | Dùng cho |
 |---|---|---|
@@ -246,8 +259,8 @@ Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
 | manga-ocr | 460 MB | Tuỳ chọn: đọc chữ vẽ tay trong manga Nhật chính xác hơn, chậm hơn |
 
 - Model tải về được lưu ở `%LOCALAPPDATA%\LazyK\models`, build lại hay cài lại LazyK vẫn còn.
-- **Use the graphics card**: chạy trên card đồ hoạ qua DirectML (NVIDIA, AMD, Intel đều được). Không có thì tự chạy bằng CPU.
-- **Source language = Any**: LazyK thử model đã đúng ở trang trước; nếu đọc không chắc thì thử thêm model kia (Nhật/Trung/Anh ↔ Hàn). Đọc truyện Hàn thì nên tải model Korean; chọn hẳn *Source language* sẽ nhanh hơn.
+- **OCR device** (⚙ → *OCR device*, hoặc trong menu của nút server): chọn **CPU** hoặc một trong các **card đồ hoạ** LazyK tìm thấy (ví dụ *RTX 2050* và *Intel UHD*). Card đồ hoạ chạy qua DirectML (NVIDIA, AMD, Intel đều được); không có DirectML thì chỉ còn CPU. Mặc định giữ nguyên như trước là card mặc định của Windows. Model OCR nhỏ nên **CPU đôi khi nhanh ngang hoặc hơn** card đồ hoạ (nhất là card tích hợp), hãy thử từng lựa chọn rồi xem thời gian `RapidOCR … X.XXs` trong `logs\lazyk.log`.
+- **Language → From = Any**: LazyK thử model đã đúng ở trang trước; nếu đọc không chắc thì thử thêm model kia (Nhật/Trung/Anh ↔ Hàn). Đọc truyện Hàn thì nên tải model Korean; chọn hẳn ngôn ngữ gốc (⚙ → Language → From) sẽ nhanh hơn.
 - Trang đầu tiên chậm hơn vài giây vì phải nạp model; các trang sau nhanh.
 - Tốc độ tham khảo (trang khoảng 10 bóng thoại): CPU khoảng 1–3 giây cho PP-OCR, thêm 0,2–0,5 giây mỗi bóng nếu dùng manga-ocr; card đồ hoạ nhanh hơn nhiều. Phần dịch bằng AI tính riêng.
 - Local OCR không phân biệt được tiếng động (SFX) với lời thoại như AI, nên chữ SFX vẽ to có thể cũng được dịch.
@@ -256,10 +269,10 @@ Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
 
 - **Phóng to trang truyện** trong trình duyệt (`Ctrl` + `+`) để AI đọc chữ chính xác hơn và chữ dịch to, dễ đọc hơn.
 - Chọn đúng **Reading order**: *Manga* cho truyện Nhật, *Webtoon* cho truyện Hàn/cuộn dọc.
-- Đặt đúng **Source language** thay vì *Any* nếu truyện chỉ có một thứ tiếng.
+- Đặt đúng ngôn ngữ gốc (⚙ → Language → From) thay vì *Any* nếu truyện chỉ có một thứ tiếng.
 - Thấy chữ dịch bị tràn ra ngoài bóng thoại? Giảm **cỡ chữ tối thiểu** trong ⚙ → *Text* một chút.
 - Model có chữ **"lite"** nhanh và nhiều lượt miễn phí hơn; model **không "lite"** (ví dụ `gemini-3.5-flash`) hiểu ngữ cảnh và xưng hô tốt hơn.
-- Dùng một font truyện tranh hỗ trợ tiếng Việt (⚙ → *Text* → *Font…*) để trông giống bản dịch thật.
+- Dùng một font truyện tranh hỗ trợ tiếng Việt (⚙ → *Text* → *Font*) để trông giống bản dịch thật.
 
 ## 🛠️ Xử lý sự cố
 
@@ -269,15 +282,15 @@ Mục **Local OCR models…** trong menu mở cửa sổ quản lý model:
 - Kiểm tra chấm trên thanh công cụ: nếu đỏ, rê chuột vào để xem lỗi.
 - Chế độ *Hotkey only* thì phải bấm `Alt + T`.
 - Chế độ *Auto* chỉ phản ứng khi cuộn trong trình duyệt được hỗ trợ (danh sách `auto_apps` trong `settings.json`).
-- Bấm ⚙ → *API keys & models…* → **Test connection** để kiểm tra key.
+- Bấm ⚙ → *API keys & models* → **Test connection** để kiểm tra key.
 </details>
 
 <details>
-<summary><b>Bật Read aloud mà không nghe thấy tiếng</b></summary>
+<summary><b>Bật Text to speech mà không nghe thấy tiếng</b></summary>
 
-- Máy cần có Internet. Báo *"Read aloud failed (check the internet connection)"* nghĩa là không kết nối được dịch vụ giọng.
+- Máy cần có Internet. Báo *"Text to speech failed (check the internet connection)"* nghĩa là không kết nối được dịch vụ giọng.
 - Báo *"install edge-tts"*: chạy lại `setup.bat` để cài thư viện còn thiếu.
-- Thử `.venv\Scripts\python main.py --tts "Xin chào"`. Nghe được ở đây mà trong app không có thì kiểm tra *Volume* (⚙ → Read aloud) và xem `logs\lazyk.log`, dòng `app.tts` ghi rõ câu bị lỗi.
+- Thử `.venv\Scripts\python main.py --tts "Xin chào"`. Nghe được ở đây mà trong app không có thì kiểm tra *Volume* (⚙ → Text to speech) và xem `logs\lazyk.log`, dòng `app.tts` ghi rõ câu bị lỗi.
 - Giọng bắt đầu chậm vài giây ở lần đọc đầu tiên là bình thường; từ lần sau nhanh hơn.
 </details>
 
@@ -346,7 +359,7 @@ Kết quả là một file duy nhất `Output\LazyK-Setup-<phiên bản>.exe`. N
 
 - LazyK chỉ gửi **ảnh vùng trang truyện** và **chữ cần dịch** tới dịch vụ AI bạn chọn (Google Gemini hoặc Cloudflare). Không có máy chủ trung gian nào khác.
 - API key và cài đặt nằm trong `settings.json` trên máy bạn.
-- Nếu bật **Read aloud**, **phần chữ đã dịch** (không phải ảnh) được gửi tới dịch vụ giọng đọc của Microsoft Edge để tạo âm thanh. Tắt Read aloud thì không có gì được gửi.
+- Nếu bật **Text to speech**, **phần chữ đã dịch** (không phải ảnh) được gửi tới dịch vụ giọng đọc của Microsoft Edge để tạo âm thanh. Tắt Text to speech thì không có gì được gửi.
 - `record-lazyk.txt` chỉ nằm trên máy bạn và bị xoá khi thoát LazyK.
 
 ## 🧑‍💻 Dành cho nhà phát triển

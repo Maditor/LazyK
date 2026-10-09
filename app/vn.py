@@ -100,6 +100,8 @@ def run_vn(pipeline, client, img: Image.Image, cancel, on_status):
         name, src, tr = parse_vn(raw)
         src = src or tr  # context line for the next scan
     else:
+        if mode == "local_google":
+            gtranslate.prewarm(10)  # (no-op when the connection was used a moment ago)
         # the engine reports model loading with ONE argument (like the manga path in pipeline.py)
         r = local_ocr.ENGINE.read_vn(img, s, cancel, lambda m: on_status("scanning", m))
         if cancel.is_set():
@@ -243,13 +245,19 @@ class VNWatcher(threading.Thread):
                     if not changing:
                         dropped = dropped or bool(self.app.overlay.visible or self.app.busy)
                         self.app.q.put(("vn_hide",))
+                        if s.read_mode() == "local_google":
+                            from . import gtranslate
+                            gtranslate.prewarm(10)  # the connection is ready when this line is read
                     changing, t_change = True, now
                 prev, painted = cur, shown
-                if changing and now - t_change >= int(s["vn_stable_ms"]) / 1000:
+                stable_ms = int(s["vn_stable_ms"])
+                if s.read_mode() == "ai":
+                    stable_ms = max(350, stable_ms)  # a scan started too early (text still typing) costs quota
+                if changing and now - t_change >= stable_ms / 1000:
                     changing = False
                     if stable_ref is None or differs(cur, stable_ref, pct, ign if (shown or ref_painted) else None):
                         stable_ref, dropped, ref_painted = cur, False, shown
-                        self.app.q.put(("vn_scan",))
+                        self.app.q.put(("vn_scan", t_change))
                     elif dropped:
                         # Same text as before: the translation was only hidden by a passing change (the
                         # game's mouse-over effect, a blinking arrow). Show the same translation again,
