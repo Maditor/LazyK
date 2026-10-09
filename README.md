@@ -160,7 +160,7 @@ Chấm tròn trên thanh công cụ cho biết LazyK đang làm gì:
 * **Create new preset:** lấy đúng cài đặt đang dùng làm preset mới, mở hộp nhỏ để đặt tên (**Save** / **Cancel**). Preset mới trở thành preset đang dùng; preset cũ giữ nguyên.
 * **Rename** / **Delete** cho preset đang dùng (trừ Default). Xoá preset đang dùng thì quay về Default.
 
-Một preset lưu: thứ tự đọc (Manga / Webtoon / Visual novel), chế độ Auto / Hotkey, khung chụp và khung hộp thoại VN, ngôn ngữ gốc và đích, ai đọc / ai dịch, server AI, thiết bị đọc chữ, font, cỡ chữ, *Auto text size*, màu chữ và màu ô, độ trong suốt / mờ, *Hide the box under the mouse*, và *Text to speech* (bật/tắt, tốc độ, âm lượng). Preset **không** lưu API key và phím tắt.
+Preset **không** lưu API key và phím tắt.
 
 ### Cài đặt (nút ⚙)
 
