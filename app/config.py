@@ -5,6 +5,8 @@ import sys
 import threading
 
 APP_NAME = "LazyK"
+APP_CREDIT = "LazyK by Maditor"
+APP_URL = "https://github.com/Maditor/LazyK"
 
 
 def app_dir() -> str:

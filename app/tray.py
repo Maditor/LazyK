@@ -33,7 +33,7 @@ class TrayIcon:
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit LazyK", lambda: self.on_quit()),
             )
-            self.icon = pystray.Icon("LazyK", img, "LazyK", menu)
+            self.icon = pystray.Icon("LazyK", img, "LazyK by Maditor", menu)
             self.icon.run_detached()
             return True
         except Exception:
@@ -53,7 +53,7 @@ class TrayIcon:
         """Hover text; carries the last error while the toolbar is hidden."""
         if self.icon:
             try:
-                self.icon.title = f"LazyK — {message[:90]}" if message else "LazyK"
+                self.icon.title = f"LazyK — {message[:90]}" if message else "LazyK by Maditor"
             except Exception:
                 log.debug("Tray title update failed", exc_info=True)
 

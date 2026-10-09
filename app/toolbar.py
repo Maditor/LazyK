@@ -128,6 +128,9 @@ class Toolbar:
             logo = tk.Label(f, image=self._logo, bg=BG, cursor="fleur")
             logo.pack(side="left", padx=(2, 0))
             drag_widgets.append(logo)
+            from .config import APP_CREDIT
+            logo.bind("<Enter>", lambda e: self._tip_later(logo, APP_CREDIT), add="+")
+            logo.bind("<Leave>", lambda e: self._tip_cancel(), add="+")
         except Exception:
             pass
         for w in drag_widgets:
@@ -461,6 +464,7 @@ class Toolbar:
             self.menu.close()
             return
         from . import langs
+        from .config import APP_CREDIT
         s, a = self.s, self.app
 
         def region():
@@ -555,7 +559,9 @@ class Toolbar:
                     ("sub", "Look", f"{s['font_min']} px", look),
                     ("sub", "Text to speech", "On" if s["tts_enabled"] else "Off", speech),
                     ("sep",),
-                    ("sub", "More", "", more)]
+                    ("sub", "More", "", more),
+                    ("sep",),
+                    ("note", APP_CREDIT)]  # just the credit: nothing to click by mistake
         self._popup(top, self.btn_settings, persistent=True)
 
     def _menu_closed(self):

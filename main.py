@@ -84,7 +84,7 @@ def main():
         return
     setup_logging()
     settings = Settings()
-    logging.info("Start (settings: %s)", settings.path)
+    logging.info("LazyK by Maditor (%s) - start (settings: %s)", "https://github.com/Maditor/LazyK", settings.path)
 
     if args.tts:
         run_tts(args.tts, settings)

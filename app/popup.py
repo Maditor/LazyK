@@ -53,6 +53,15 @@ class PopupMenu:
                 tk.Frame(outer, bg=T.BORDER, width=1).pack(side="left", fill="y", padx=6, pady=4)
                 body = tk.Frame(outer, bg=T.PANEL)
                 body.pack(side="left", anchor="n")
+            elif kind == "note":  # small muted line (credit / link); a click runs it[2] and closes
+                _, text, cb = (list(it) + [None])[:3]
+                lab = tk.Label(body, text=text, bg=T.PANEL, fg=T.MUTED, font=f["small"], anchor="w", padx=10, pady=3,
+                               cursor="hand2" if cb else "")
+                lab.pack(fill="x")
+                if cb:
+                    lab.bind("<Enter>", lambda e, w=lab: w.configure(fg=T.ACCENT))
+                    lab.bind("<Leave>", lambda e, w=lab: w.configure(fg=T.MUTED))
+                    lab.bind("<ButtonRelease-1>", lambda e, c=cb: (self._top().close(), c()))
             elif kind == "header":
                 tk.Label(body, text=it[1].upper(), bg=T.PANEL, fg=T.MUTED, font=f["small"],
                          anchor="w", padx=10, pady=4).pack(fill="x")

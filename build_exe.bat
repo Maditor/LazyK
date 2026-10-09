@@ -29,6 +29,7 @@ echo === 2/4 Building (this takes a few minutes) ===
 %PY% -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name "LazyK" ^
   --icon "assets\icon.ico" ^
+  --version-file "installer\version_info.txt" ^
   --add-data "assets;assets" ^
   --hidden-import pynput.keyboard._win32 ^
   --hidden-import pynput.mouse._win32 ^

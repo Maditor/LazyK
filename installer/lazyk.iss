@@ -13,6 +13,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Maditor
 AppPublisherURL=https://github.com/Maditor/LazyK
+AppCopyright=LazyK by Maditor (MIT License)
+VersionInfoCompany=Maditor
+VersionInfoDescription=LazyK by Maditor - installer
 AppSupportURL=https://github.com/Maditor/LazyK/issues
 ; Per-user install: no admin prompt, and LazyK can write settings.json / logs next to the exe
 ; (Program Files would be read-only for it).
