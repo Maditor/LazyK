@@ -1,4 +1,5 @@
 """Transparent, click-through Tk overlay that paints translated bubbles, plus a status pill."""
+import functools
 import logging
 import tkinter as tk
 import tkinter.font as tkfont
@@ -11,11 +12,21 @@ log = logging.getLogger(__name__)
 KEY_COLOR = "#ff00fe"  # painted = fully transparent (never used for boxes/text)
 
 
+@functools.lru_cache(maxsize=32)
+def _round_mask(w, h, radius):
+    """Rounded-rectangle mask, made once per size (the same box size comes back line after line)."""
+    from PIL import Image, ImageDraw
+    ss = 4
+    mask = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=radius * ss, fill=255)
+    return mask.resize((w, h), Image.LANCZOS).point(lambda v: 255 if v >= 128 else 0)  # hard edge: no pink fringe
+
+
 def glass_image(bg, size, offset, fill, opacity, blur, radius):
     """A see-through box with a frosted background, as a picture (Tk canvas has no alpha or blur).
     bg: screenshot of the area under the overlay, offset: (x, y) of the box in it, size: (w, h).
     opacity: % solid. Corners outside the rounded rectangle are KEY_COLOR, so they stay transparent."""
-    from PIL import Image, ImageColor, ImageDraw, ImageFilter
+    from PIL import Image, ImageColor, ImageFilter
     w, h = int(size[0]), int(size[1])
     x0, y0 = int(offset[0]), int(offset[1])
     m = int(3 * blur)  # blur with the pixels around the box too, or its edges go dark / flat
@@ -29,10 +40,7 @@ def glass_image(bg, size, offset, fill, opacity, blur, radius):
         pad.paste(base, (0, 0))
         base = pad
     base = Image.blend(base, Image.new("RGB", (w, h), ImageColor.getrgb(fill)), max(0, min(100, opacity)) / 100.0)
-    ss = 4
-    mask = Image.new("L", (w * ss, h * ss), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=max(0, radius) * ss, fill=255)
-    mask = mask.resize((w, h), Image.LANCZOS).point(lambda v: 255 if v >= 128 else 0)  # hard edge: no pink fringe
+    mask = _round_mask(w, h, int(max(0, radius)))
     out = Image.new("RGB", (w, h), ImageColor.getrgb(KEY_COLOR))
     out.paste(base, (0, 0), mask)
     return out
@@ -127,6 +135,25 @@ class Overlay(_ClickThroughWindow):
         self._hover_tag = None
         self._pics = []       # PhotoImages of see-through boxes (Tk drops an image nobody references)
         self._bg = None       # (rect, screenshot of the screen under the overlay, taken while it was hidden)
+        self.textbox = None   # TextBox while Settings → Look → Text box is on
+
+    def text_box_mode(self):
+        """The separate box is a visual novel option (manga / webtoon keep the translation on the bubbles)."""
+        return bool(self.settings["text_box"]) and self.settings["layout"] == "vn"
+
+    def sync_text_box(self):
+        """Create / remove the separate box to follow the setting."""
+        if self.text_box_mode():
+            if self.textbox is None:
+                from .textbox import TextBox
+                self.textbox = TextBox(self.win.master, self.settings)
+            if not self.textbox.shown:
+                self.textbox.show()
+            super().hide()  # nothing is painted on the page in this mode
+        elif self.textbox is not None:
+            self.textbox.destroy()
+            self.textbox = None
+            self.visible = False
 
     def _background(self, rect):
         """Screenshot of what is under the overlay. Never of the overlay itself: reuse the one taken
@@ -160,6 +187,15 @@ class Overlay(_ClickThroughWindow):
 
     def show_items(self, rect, items, dpi=96):
         s = self.settings
+        if self.text_box_mode():
+            self.sync_text_box()
+            self.rect = rect
+            self._hit, self._hover_tag = [], None
+            self.textbox.set_texts([str(it.get("translation") or "").strip() for it in items])
+            self.visible = bool(self.textbox.texts)
+            self.version += 1
+            log.info("Text box: %d translation(s)", len(self.textbox.texts))
+            return
         # The tool always hides the overlay before its own capture, so it may appear in the user's
         # screenshots (Print Screen, Snipping Tool) without being read back by the OCR
         # Visual novel auto-scan watches the screen: our own translation must not look like new text
@@ -258,6 +294,19 @@ class Overlay(_ClickThroughWindow):
             self.canvas.itemconfigure(tag, state="hidden")
         self._hover_tag = tag
         self.version += 1
+
+    def hide(self):
+        if self.textbox is not None and self.textbox.shown:
+            if self.visible:
+                self.textbox.set_texts([])  # the box stays where it is, empty
+                self.version += 1
+            self.visible = False
+        super().hide()
+
+    def apply_capture(self):
+        super().apply_capture()
+        if self.textbox is not None:
+            self.textbox.apply_capture()
 
     def clear(self):
         self.version += 1

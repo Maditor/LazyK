@@ -40,11 +40,11 @@ DEFAULTS = {
     "auto_switch_model": True,      # busy / out of quota -> next model in the list
     "auto_switch_server": True,     # server out of quota / bad key -> the other server
     # Reading the page (OCR)
-    "ocr_engine": "ai",             # ai (the server above reads the image) | local (this PC reads it)
+    "ocr_engine": "local",          # ai (the server above reads the image) | local (this PC reads it)
     "local_gpu": False,             # local OCR on a graphics card (DirectML); false = CPU (default: small models are faster on the CPU)
     "local_gpu_id": 0,              # which card: DirectML device number (0 = the Windows default card)
     "local_manga_ocr": True,        # Japanese: re-read blocks with manga-ocr when it is downloaded
-    "translator": "ai",             # with local OCR: ai (Gemini / Cloudflare) | google (Google Translate, no key)
+    "translator": "google",         # with local OCR: ai (Gemini / Cloudflare) | google (Google Translate, no key)
     # Languages / content
     "source_lang": "auto",          # auto | ja | ko | zh | en
     "target_lang": "Vietnamese",
@@ -75,7 +75,7 @@ DEFAULTS = {
                                     # (AI reading the image: at least 350, a scan started too early costs quota)
     "vn_change_pct": 0.3,           # % of the box that must change to count as new text (raise it if a big icon blinks)
     "vn_max_width": 1000,           # image width sent to the AI
-    "vn_game_colors": True,         # auto-detect the background colour (all layouts: manga, webtoon, visual novel) and paint the translation in it
+    "vn_game_colors": True,         # auto-detect the background color (all layouts: manga, webtoon, visual novel) and paint the translation in it
     # Capture
     "capture_mode": "window",       # window (browser page area) | region (frame drawn by the user)
     "region": None,                 # [x, y, w, h] physical px of the drawn frame
@@ -92,6 +92,8 @@ DEFAULTS = {
     "overlay_opacity": 100,         # % of the box background that is solid; lower = the screen shows through
     "overlay_blur": 0,              # px: blur of the screen seen through a see-through box (frosted glass)
     "overlay_shadow": False,
+    "text_box": False,              # translations in a separate, movable box instead of over the page
+    "text_box_rect": None,          # [x, y, w, h] of that box (screen px); None = bottom center
     "hover_hide": True,             # mouse over a translated box hides that box until the mouse leaves
     "developer_mode": False,        # tool windows (toolbar, menus, status, overlay) are visible to OBS & co
     "overlay_in_screenshots": True,  # Print Screen / Snipping Tool can capture the translated page

@@ -2,7 +2,7 @@
 
 The mouse-wheel hook misses a lot: touchpad two-finger scrolling in Chrome / Edge (no wheel messages),
 dragging the scrollbar, a reader that scrolls by itself, and a hook that Windows silently drops after
-it was slow once. So a few times per second this thread grabs a small grey copy of the page area and
+it was slow once. So a few times per second this thread grabs a small gray copy of the page area and
 checks whether its content moved up or down. A move counts exactly like a wheel scroll: the overlay
 hides and Auto translates again once the page stands still.
 
@@ -20,9 +20,9 @@ from . import winapi
 
 log = logging.getLogger(__name__)
 
-SMALL_W = 120        # width of the grey copy (px)
+SMALL_W = 120        # width of the gray copy (px)
 TICK_S = 0.12        # how often the page is looked at
-STILL = 1.5          # mean grey difference below this = nothing moved
+STILL = 1.5          # mean gray difference below this = nothing moved
 KEEP_LOOKS = 6       # a slow scroll may take this many looks to show as a shift
 BANDS = 4            # the width is cut in vertical bands; most of them must agree on the shift
 
@@ -34,7 +34,7 @@ def _small(img: Image.Image) -> np.ndarray:
 
 
 def _profiles(a, keep):
-    """Mean grey per row and band, ignoring masked pixels (the translation boxes). NaN = row fully masked."""
+    """Mean gray per row and band, ignoring masked pixels (the translation boxes). NaN = row fully masked."""
     h, w = a.shape
     out = np.full((h, BANDS), np.nan, dtype=np.float32)
     edges = np.linspace(0, w, BANDS + 1).astype(int)

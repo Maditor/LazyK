@@ -1,7 +1,7 @@
 """A taskbar button for LazyK.
 
 Every real window of the app is a tool window or an overlay without a taskbar entry. This is one more
-window, kept minimised, whose only job is to be that button:
+window, kept minimized, whose only job is to be that button:
   * right-click → "Close window" quits the app (WM_DELETE_WINDOW),
   * a click brings the toolbar back (it also shows it again when it was hidden with the toolbar key),
   * while the toolbar is hidden the button is hidden too (set_visible): the tray icon takes over,
@@ -26,7 +26,7 @@ class TaskbarButton:
         self._ready = True
 
     def _mapped(self, _e=None):
-        """The user clicked the taskbar button: Windows restored this window. Minimise it again and act."""
+        """The user clicked the taskbar button: Windows restored this window. Minimize it again and act."""
         if not self._ready:
             return
         try:

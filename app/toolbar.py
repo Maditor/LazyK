@@ -505,20 +505,28 @@ class Toolbar:
 
         def look():
             fam = s["font_family"]
-            rows = [("item", "Font", False, self.open_font_picker, fam if len(fam) <= 16 else fam[:15] + "…", "close"),
+            vn = s["layout"] == "vn"
+            rows = [("header", "Text"),
+                    ("item", "Font", False, self.open_font_picker, fam if len(fam) <= 16 else fam[:15] + "…", "close"),
                     ("entry", "Minimum size", s["font_min"], a.set_font_size, "px"),
                     ("item", "Auto text size", bool(s["auto_text_size"]), a.toggle_auto_text_size, "up to 1.6×"),
-                    ("item", "Text colour", False,
-                     lambda: a.pick_overlay_color("overlay_fg", "Translated text colour"), s["overlay_fg"], "close"),
-                    ("item", "Box colour", False,
+                    ("item", "Text color", False,
+                     lambda: a.pick_overlay_color("overlay_fg", "Translated text color"), s["overlay_fg"], "close"),
+                    ("sep",),
+                    ("header", "Box"),
+                    ("item", "Box color", False,
                      lambda: a.pick_overlay_color("overlay_bg", "Translated box background"), s["overlay_bg"], "close"),
-                    ("item", "Box colour from the page", bool(s["vn_game_colors"]), a.toggle_vn_colors, None)]
-            if s["layout"] == "vn":  # see-through boxes are for visual novels only
+                    ("item", "Box color from the page", bool(s["vn_game_colors"]), a.toggle_vn_colors, None)]
+            if vn:  # see-through boxes are for visual novels only
                 rows += [("entry", "Box opacity", s["overlay_opacity"], a.set_overlay_opacity, "%"),
                          ("entry", "Box blur", s["overlay_blur"], a.set_overlay_blur, "px")]
             rows += [("sep",),
+                     ("header", "Display"),
+                     ("item", "Text box", bool(s["text_box"]) and vn, a.toggle_text_box,
+                      "separate, movable" if vn else "🔒 Visual novel only"),
                      ("item", "Hide the box under the mouse", bool(s["hover_hide"]), a.toggle_hover_hide, None),
                      ("item", "Show in screenshots", bool(s["overlay_in_screenshots"]), a.toggle_overlay_capture, None),
+                     ("sep",),
                      ("item", "Reset look", False, a.reset_overlay_colors, None)]
             return rows
 

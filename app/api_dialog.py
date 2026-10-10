@@ -87,7 +87,7 @@ class ApiDialog:
                              highlightbackground=T.BORDER)
         self.card.pack(fill="x", padx=22, pady=(12, 0))
 
-        # Behaviour
+        # Behavior
         beh = tk.Frame(w, bg=T.BG, padx=22, pady=8)
         beh.pack(fill="x")
         for var, title, sub in (

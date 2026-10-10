@@ -178,6 +178,18 @@ def lower_this_thread():
         pass
 
 
+def gentle_process(on=True):
+    """Whole process below normal priority (on) or back to normal. Used for the first seconds after start:
+    loading models also runs on onnxruntime's own worker threads, which a per-thread priority misses."""
+    if not IS_WIN:
+        return
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000 if on else 0x20)  # BELOW_NORMAL / NORMAL
+    except Exception:
+        pass
+
+
 def cursor_pos():
     """Mouse position in physical screen px, or None."""
     if not IS_WIN:

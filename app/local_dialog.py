@@ -32,7 +32,6 @@ class LocalDialog:
         self.cancel = threading.Event()
         self.busy = None  # pack being downloaded
         self.rows = {}
-        self.gpu = tk.BooleanVar(value=bool(settings["local_gpu"]))
         self.mocr = tk.BooleanVar(value=bool(settings["local_manga_ocr"]))
         self._build()
         self._refresh()
@@ -80,13 +79,15 @@ class LocalDialog:
 
         opts = tk.Frame(w, bg=T.BG, padx=22, pady=8)
         opts.pack(fill="x")
-        gpu = L.gpu_name()
+        # Which device reads the page is chosen in one place only: the OCR device menu
+        r = tk.Frame(opts, bg=T.BG, pady=3)
+        r.pack(fill="x")
+        tk.Label(r, text="OCR device: " + self._device(), bg=T.BG, fg=T.FG, font=f["bold"]).pack(anchor="w")
+        tk.Label(r, text="Choose the CPU or a graphics card in the server menu → OCR device", bg=T.BG, fg=T.MUTED,
+                 font=f["small"]).pack(anchor="w")
         for var, title, sub, cmd in (
-                (self.gpu, "Use the graphics card",
-                 f"{gpu} available. Pick the card or the CPU in the toolbar menu (OCR device)" if gpu else "No GPU runtime found: runs on the CPU",
-                 lambda: self.s.update(local_gpu=bool(self.gpu.get()))),
                 (self.mocr, "Read Japanese with manga-ocr", "When it is downloaded. Slower, more accurate.",
-                 lambda: self.s.update(local_manga_ocr=bool(self.mocr.get())))):
+                 lambda: self.s.update(local_manga_ocr=bool(self.mocr.get()))),):
             r = tk.Frame(opts, bg=T.BG, pady=3)
             r.pack(fill="x")
             T.Switch(r, var, command=cmd).pack(side="right")
@@ -100,6 +101,13 @@ class LocalDialog:
         self.use_btn = T.FlatButton(foot, "", self._toggle_use, "primary", font=f["bold"])
         self.use_btn.pack(side="right")
         T.FlatButton(foot, "Close", self.close, "secondary", font=f["bold"]).pack(side="right", padx=8)
+
+    def _device(self):
+        from . import gpus
+        if not self.s["local_gpu"] or not L.gpu_name():
+            return "CPU"
+        card = next((g for g in gpus.cached() or [] if g["id"] == int(self.s["local_gpu_id"])), None)
+        return gpus.short_name(card["name"], 28) if card else "graphics card"
 
     def _refresh(self):
         for pack, r in self.rows.items():
@@ -159,7 +167,7 @@ class LocalDialog:
             try:
                 L.download_pack(pack, lambda fr, t: later(lambda: self._progress(pack, fr, t)), self.cancel)
             except Exception as e:
-                err = "Cancelled" if self.cancel.is_set() else str(e)
+                err = "Canceled" if self.cancel.is_set() else str(e)
             later(lambda: self._done(pack, err))
         threading.Thread(target=run, daemon=True).start()
 

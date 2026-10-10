@@ -25,7 +25,7 @@ def trim_borders(gray: np.ndarray, tol: float = 4.0, margin: int = 6):
     g = gray.astype(np.int16)
     col_busy = np.abs(np.diff(g, axis=0)).mean(axis=0) > tol * 0.25
     row_busy = np.abs(np.diff(g, axis=1)).mean(axis=1) > tol * 0.25
-    # Also treat columns whose colour differs from the page edge colour as content
+    # Also treat columns whose color differs from the page edge color as content
     bg = np.median(np.concatenate([g[:, :3].ravel(), g[:, -3:].ravel()]))
     col_busy |= np.abs(g.mean(axis=0) - bg) > tol * 2
     xs = np.nonzero(col_busy)[0]
@@ -244,7 +244,7 @@ def _bubble_shape(interior, stats, offset, tb, tb_area, paper_px, model_area=Non
         if len(xs) == 0:
             rows.append([-1, -1])
             continue
-        # split into runs, keep the run under the text centre (or the widest one)
+        # split into runs, keep the run under the text center (or the widest one)
         breaks = np.flatnonzero(np.diff(xs) > 1)
         starts = np.concatenate(([xs[0]], xs[breaks + 1]))
         ends = np.concatenate((xs[breaks], [xs[-1]]))
@@ -271,7 +271,7 @@ def refine_any(gray, inv, box):
 
 
 def item_colors(rgb: np.ndarray, box, min_ring: int = 3):
-    """(background, ink) hex colours for the text at `box` (x1, y1, x2, y2) of an RGB image.
+    """(background, ink) hex colors for the text at `box` (x1, y1, x2, y2) of an RGB image.
 
     The background is read from a ring just outside the tight text box - that is the bubble's paper, the
     caption box or the art behind free text, never the strokes themselves. Outliers (a bubble outline,
@@ -303,14 +303,14 @@ def item_colors(rgb: np.ndarray, box, min_ring: int = 3):
 
 
 def attach_colors(img, items):
-    """Give every item its own box colours (item["colors"]) so the overlay can match the page - manga,
-    webtoon and visual novel alike. Items whose colours cannot be read keep none (user colours apply)."""
+    """Give every item its own box colors (item["colors"]) so the overlay can match the page - manga,
+    webtoon and visual novel alike. Items whose colors cannot be read keep none (user colors apply)."""
     rgb = np.asarray(img.convert("RGB"))
     for it in items:
         try:
             c = item_colors(rgb, it["box"]) if it.get("box") else None
         except Exception:
-            log.exception("Could not read the background colour")
+            log.exception("Could not read the background color")
             c = None
         if c:
             it["colors"] = c

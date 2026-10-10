@@ -64,7 +64,7 @@ def parse_vn(raw: str):
 
 
 def frame_colors(img: Image.Image):
-    """Box colour of the game's text box (median pixel) and a readable text colour on it."""
+    """Box color of the game's text box (median pixel) and a readable text color on it."""
     w, h = img.size
     small = np.asarray(img.convert("RGB").resize((64, max(1, round(64 * h / max(1, w)))), Image.BILINEAR))
     r, g, b = (int(v) for v in np.median(small.reshape(-1, 3), axis=0))

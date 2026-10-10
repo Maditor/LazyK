@@ -89,6 +89,8 @@ class App:
             self.root.after(2500, self.page_watcher.start)
         self.root.after(30, self._poll)
         self.toolbar.show()
+        if self.overlay.text_box_mode():
+            self.root.after(200, self.overlay.sync_text_box)
         if not self.demo:
             self._quiet_start()
         if self.s.needs_ai() and not self.s.has_credentials() and not self.demo:
@@ -102,6 +104,10 @@ class App:
         Whatever the user does first (a scan) still loads what it needs on its own."""
         from . import gpus, gtranslate, local_ocr
         s = self.s
+        # The first seconds load several models: the whole process runs below normal priority meanwhile,
+        # so games, the browser and video keep running smoothly. Back to normal after that.
+        winapi.gentle_process(True)
+        self.root.after(12000, lambda: winapi.gentle_process(False))
         steps = []
         if s["ocr_engine"] == "local":
             steps.append((1200, lambda: local_ocr.ENGINE.warm(s)))
@@ -453,6 +459,7 @@ class App:
         self.overlay.clear()
         self.pipeline.prev_lines = []
         self.s.update(layout=layout)
+        self.overlay.sync_text_box()  # the text box (visual novel only) comes / goes with the layout
         self.toolbar.refresh()
         self._status("info", "Reading order: " + self.LAYOUT_NAMES[layout], auto_hide=2000)
         if layout == "vn" and not self._region():
@@ -493,6 +500,10 @@ class App:
         if new.read_mode() == "local_google":
             from . import gtranslate
             gtranslate.prewarm()
+        if old["text_box_rect"] != new["text_box_rect"] and self.overlay.textbox is not None:
+            self.overlay.textbox.destroy()  # reopened at the preset's place
+            self.overlay.textbox = None
+        self.overlay.sync_text_box()
         self.toolbar.refresh()
         self._status("info", "Preset: " + name, auto_hide=1800)
         if new.needs_ai() and not new.has_credentials():
@@ -671,6 +682,8 @@ class App:
         if self.overlay.visible and self.last:
             self.overlay.show_items(*self.last)
             self.toolbar.raise_()
+        elif self.overlay.textbox is not None:
+            self.overlay.textbox.render()  # an empty text box still shows the new colors / opacity
 
     def apply_font(self, family, bold, save=True):
         self.s.data.update(font_family=family, font_bold=bool(bold))
@@ -740,16 +753,30 @@ class App:
         self.rerender()
         self.toolbar.refresh()
 
-    # ------------------------------------------------------------ overlay colours
+    # ------------------------------------------------------------ overlay colors
     def pick_overlay_color(self, key, title):
-        """key: overlay_bg | overlay_fg. Windows colour dialog; applied live on the visible overlay."""
-        from tkinter import colorchooser
-        _rgb, hexa = colorchooser.askcolor(color=self.s[key], title=title, parent=self.root)
-        if hexa:
-            self.s.update(**{key: hexa.lower()})
+        """key: overlay_bg | overlay_fg. LazyK's color picker (with an eyedropper); applied live."""
+        from .color_dialog import ColorDialog
+        old = self.s[key]
+
+        def preview(hexa):
+            self.s.data[key] = hexa  # not saved yet: OK saves, Cancel puts the old one back
             self.rerender()
+            if self.overlay.textbox is not None:
+                self.overlay.textbox.render()
+
+        def done(hexa):
+            if hexa:
+                self.s.update(**{key: hexa.lower()})
+            else:
+                self.s.data[key] = old
+            self.rerender()
+            if self.overlay.textbox is not None:
+                self.overlay.textbox.render()
             self.toolbar.refresh()
-        self.restore_focus()
+            self.restore_focus()
+
+        ColorDialog(self.root, old, title, on_change=preview, on_done=done)
 
     def set_overlay_opacity(self, text):
         """Typed in Settings → Text → Background opacity (0-100 %)."""
@@ -771,7 +798,7 @@ class App:
         upd = {"overlay_blur": v}
         if v > 0 and int(self.s["overlay_opacity"]) >= 100:
             # blur is the screen seen through the box: a fully solid box has nothing to blur, so the setting
-            # used to do nothing. Make the box see-through (the colours stay the auto-picked ones).
+            # used to do nothing. Make the box see-through (the colors stay the auto-picked ones).
             upd["overlay_opacity"] = 75
             self._status("info", "Blur shows through a see-through box: opacity set to 75%", auto_hide=4000)
         self.s.update(**upd)
@@ -903,6 +930,23 @@ class App:
         self._status("info", "Text size: " + ("grows in roomy boxes" if self.s["auto_text_size"] else
                                               f"always {self.s['font_min']} px"), auto_hide=1800)
 
+    def toggle_text_box(self):
+        """Settings → Look → Text box (visual novel): translations in a separate box, or over the game again."""
+        if self.s["layout"] != "vn":
+            self._status("info", "Text box is for Visual novel (Reading order → Visual novel)", auto_hide=2500)
+            return
+        on = not self.s["text_box"]
+        was = self.overlay.visible
+        self.overlay.clear()
+        self.s.update(text_box=on)
+        self.overlay.sync_text_box()
+        if was and self.last:
+            self.overlay.show_items(*self.last)
+        self.toolbar.refresh()
+        self.toolbar.raise_()
+        self._status("info", "Translations in a separate box: drag it, resize it from the corner" if on
+                     else "Translations over the page", auto_hide=2500)
+
     def toggle_hover_hide(self):
         self.s.update(hover_hide=not self.s["hover_hide"])
         if not self.s["hover_hide"]:
@@ -956,7 +1000,7 @@ class App:
         # Page is moving: hide right away and drop any job in flight
         was_busy = self.busy
         if was_busy:
-            log.info("Job %d cancelled by scrolling", self.gen)
+            log.info("Job %d canceled by scrolling", self.gen)
         if self.overlay.visible or self.busy:
             self._cancel_job()
             self.overlay.clear()
@@ -977,7 +1021,7 @@ class App:
             return
         if self.overlay.visible or self.busy:
             if self.busy:
-                log.info("Job %d cancelled: the page moved", self.gen)
+                log.info("Job %d canceled: the page moved", self.gen)
             was_busy = self.busy
             self._cancel_job()
             self.overlay.clear()
@@ -1063,18 +1107,18 @@ class App:
                 use_cache=not fresh)
             self.q.put(("done", gen, rect, dpi, items, cached))
         except Cancelled:
-            log.info("Job %d cancelled", gen)
+            log.info("Job %d canceled", gen)
         except Exception as e:
             log.exception("Job failed")
             self.q.put(("error", gen, str(e)[:160]))
 
 
 def demo_items(rect):
-    """Calibration boxes 20px inside each corner + centre: checks capture rect and DPI mapping."""
+    """Calibration boxes 20px inside each corner + center: checks capture rect and DPI mapping."""
     _x, _y, w, h = rect
     bw, bh, m = 180, 60, 20
     spots = {
-        "Top-left": (m, m), "Top-right": (w - m - bw, m), "Centre": ((w - bw) / 2, (h - bh) / 2),
+        "Top-left": (m, m), "Top-right": (w - m - bw, m), "Center": ((w - bw) / 2, (h - bh) / 2),
         "Bottom-left": (m, h - m - bh), "Bottom-right": (w - m - bw, h - m - bh),
     }
     return [{"text": k, "type": "bubble", "box": [x, y, x + bw, y + bh],

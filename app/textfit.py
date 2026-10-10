@@ -177,7 +177,7 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
         return None
     top, bot = valid[0], valid[-1] + 1
     tot = float(sum(widths))
-    centre = sum(i * w for i, w in enumerate(widths)) / tot  # width-weighted middle of the bubble
+    center = sum(i * w for i, w in enumerate(widths)) / tot  # width-weighted middle of the bubble
     for size in range(fmax, fmin - 1, -1):
         measure, lh = metrics(size)
         max_lines = int((bot - top - 2 * pad) // lh)
@@ -188,9 +188,9 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
         space = measure(" ")
         best, best_cost, first = None, None, None
         for n in range(1, min(max_lines, len(words)) + 1):
-            btop = centre - n * lh / 2
+            btop = center - n * lh / 2
             btop = max(top + pad, min(btop, bot - pad - n * lh))
-            limits, centres = [], []
+            limits, centers = [], []
             for k in range(n):
                 a, b = int(btop + k * lh), int(btop + (k + 1) * lh)
                 band = rows[max(0, a):min(len(rows), b)]
@@ -201,7 +201,7 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
                 if right - left < 4:
                     break
                 limits.append(right - left)
-                centres.append(((left + right) / 2, y0 + btop + (k + 0.5) * lh))
+                centers.append(((left + right) / 2, y0 + btop + (k + 0.5) * lh))
             if len(limits) < n:
                 continue
             res = _partition(words, ww, space, n, limits, strict)
@@ -211,7 +211,7 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
                 first = n
             cost = res[1] + EXTRA_LINE_COST * (n - first)
             if best_cost is None or cost < best_cost:
-                best, best_cost = [(l, cx, cy) for l, (cx, cy) in zip(res[0], centres)], cost
+                best, best_cost = [(l, cx, cy) for l, (cx, cy) in zip(res[0], centers)], cost
             if n >= first + 2:
                 break
         if best:
@@ -220,8 +220,8 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
 
 
 def bubble_colors(shape, settings):
-    """Paint a cleaned bubble in its own paper tone: white bubbles use the user's colours,
-    grey or black bubbles keep their tone with contrasting text."""
+    """Paint a cleaned bubble in its own paper tone: white bubbles use the user's colors,
+    gray or black bubbles keep their tone with contrasting text."""
     level = int(shape.get("fill", 255))
     if level >= 235 and not shape.get("invert"):
         return settings["overlay_bg"], settings["overlay_fg"]
@@ -270,7 +270,7 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                       or fit_shape(text, shape, fmin, fmin, 0.5, metrics, strict=False))
         if placed:
             size, lines = placed
-            if it.get("colors") and settings["vn_game_colors"]:  # auto colour: the bubble's own paper
+            if it.get("colors") and settings["vn_game_colors"]:  # auto color: the bubble's own paper
                 fill, ink = it["colors"]
             else:
                 fill, ink = bubble_colors(shape, settings)
@@ -278,7 +278,7 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                         "size": size, "lines": lines, "fill": fill, "ink": ink})
             blocked.append(tuple(it["bubble"]))
         else:
-            if it.get("colors") and settings["vn_game_colors"]:  # auto colour: the box / bubble's own colour (all layouts)
+            if it.get("colors") and settings["vn_game_colors"]:  # auto color: the box / bubble's own color (all layouts)
                 colors = tuple(it["colors"])
             else:
                 colors = bubble_colors(shape, settings) if shape else (settings["overlay_bg"], settings["overlay_fg"])

@@ -97,7 +97,7 @@ class Pipeline:
         t1 = time.time()
         log.info("OCR: %d items in %.1fs", len(items), t1 - t0)
         if items:
-            refine.attach_colors(img, items)  # background colour of every bubble / box (auto colour option)
+            refine.attach_colors(img, items)  # background color of every bubble / box (auto color option)
             on_status("translating", "Translating…")
             src = [it["text"] for it in items]
             budgets = [char_budget(it, s, scale) for it in items]

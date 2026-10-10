@@ -9,7 +9,7 @@ MIN_SIZE = 80
 
 
 class RegionSelector:
-    """Calls on_done((x, y, w, h)) in physical screen px, or on_done(None) when cancelled."""
+    """Calls on_done((x, y, w, h)) in physical screen px, or on_done(None) when canceled."""
 
     def __init__(self, root, on_done, current=None):
         self.on_done = on_done

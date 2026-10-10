@@ -3,7 +3,7 @@
   Built in     RapidOCR with PaddleOCR PP-OCRv6 (detector + multilingual recognizer):
                Japanese (also vertical), Chinese, English. Nothing to download.
   Korean       PP-OCRv5 Korean recognizer, 13 MB download.
-  manga-ocr    optional, 460 MB: reads Japanese manga lettering (hand drawn, stylised) better.
+  manga-ocr    optional, 460 MB: reads Japanese manga lettering (hand drawn, stylized) better.
                PP-OCRv6 still finds the text; manga-ocr reads each block.
 
 Models are ONNX, run with onnxruntime (DirectML = any Windows GPU, else CPU), and downloads are kept in
@@ -242,7 +242,7 @@ def _mocr_post(text):
 # ---------------------------------------------------------------- RapidOCR (PaddleOCR models)
 def _patch_dml_device():
     """RapidOCR passes no device number to DirectML (it always takes card 0). Let it use GPU_ID instead.
-    Card 0 keeps RapidOCR's own behaviour. Written against the pinned rapidocr 3.9.2; if the module is not
+    Card 0 keeps RapidOCR's own behavior. Written against the pinned rapidocr 3.9.2; if the module is not
     as expected nothing changes (the default card is used)."""
     try:
         from rapidocr.inference_engine.onnxruntime import provider_config as pc
@@ -335,7 +335,7 @@ def _divided(gray, A, B, vertical):
             return False
         y1, y2 = sorted((min(A[3], B[3]), max(A[1], B[1])))
         x1, x2 = max(A[0], B[0]), min(A[2], B[2])
-        if x2 - x1 < 4:  # barely overlapping: use the span between their centres
+        if x2 - x1 < 4:  # barely overlapping: use the span between their centers
             x1, x2 = sorted((int((A[0] + A[2]) / 2), int((B[0] + B[2]) / 2)))
             x1, x2 = x1 - 4, x2 + 4
         band = gray[y1:y2, max(0, x1):x2]
@@ -416,7 +416,7 @@ def _name_bracketed(t):
 
 
 def _pad_bgr(bgr, pad):
-    """Border in the box's own colour: detectors miss text that touches the edge of the frame."""
+    """Border in the box's own color: detectors miss text that touches the edge of the frame."""
     import cv2
     ring = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
     col = [int(v) for v in np.median(ring, axis=0)]
@@ -463,7 +463,7 @@ def _vn_rows(lines):
 
 
 def _row_ink(bgr, row):
-    """Colour of a row's letters: mean of the pixels that differ most from the row's background."""
+    """Color of a row's letters: mean of the pixels that differ most from the row's background."""
     crop = bgr[max(0, row["y1"]):row["y2"], max(0, row["x1"]):row["x2"]].reshape(-1, 3).astype(np.float32)
     if len(crop) < 20:
         return None
@@ -474,7 +474,7 @@ def _row_ink(bgr, row):
 
 def _split_name(rows):
     """First row = speaker name? It must look like one (short, no sentence end, narrower than the
-    dialogue) AND be set apart (gap, size, indent, brackets or its own colour). -> (name, body rows)"""
+    dialogue) AND be set apart (gap, size, indent, brackets or its own color). -> (name, body rows)"""
     if len(rows) < 2:
         return "", rows
     r0, rest = rows[0], rows[1:]
@@ -496,9 +496,9 @@ def _split_name(rows):
     size_cue = abs(h0 - h1) > 0.35 * max(h0, h1)
     indent_cue = abs(r0["x1"] - rest[0]["x1"]) > 0.5 * h1
     i0, i1 = r0.get("ink"), rest[0].get("ink")
-    colour_cue = i0 is not None and i1 is not None and float(np.linalg.norm(i0 - i1)) > 70
+    color_cue = i0 is not None and i1 is not None and float(np.linalg.norm(i0 - i1)) > 70
     r0["cues"] = [n for n, v in (("gap", gap_cue), ("size", size_cue), ("indent", indent_cue),
-                                 ("bracket", bracket_cue), ("colour", colour_cue)) if v]
+                                 ("bracket", bracket_cue), ("color", color_cue)) if v]
     return (core, rest) if r0["cues"] else ("", rows)
 
 
@@ -528,14 +528,19 @@ class LocalOcr:
             from . import winapi
             winapi.lower_this_thread()
             try:
-                with self._lock:
-                    use_gpu = bool(settings["local_gpu"])
-                    kind = "ko" if settings["source_lang"] == "ko" and pack_ready("ko") else "multi"
-                    self._get(kind, lambda: _rapid(kind, use_gpu), use_gpu)
-                    self._get(kind + "_vn", lambda: _rapid(kind, use_gpu, vn=True), use_gpu)
+                use_gpu = bool(settings["local_gpu"])
+                kind = "ko" if settings["source_lang"] == "ko" and pack_ready("ko") else "multi"
+                if settings["layout"] == "vn":
                     # visual novel rows are re-read by their own recognizer: load it now too, or the
                     # first dialogue box that needs it waits for the model to load
-                    self._get(kind + "_rec", lambda: _rapid(kind, use_gpu, rec_only=True), use_gpu)
+                    need = [(kind + "_vn", dict(vn=True)), (kind + "_rec", dict(rec_only=True))]
+                else:  # manga / webtoon: the page model only (the VN ones load if VN is chosen)
+                    need = [(kind, {})]
+                for n, (key, kw) in enumerate(need):
+                    if n:
+                        time.sleep(0.8)  # one model at a time, with a pause: no long burst of work
+                    with self._lock:
+                        self._get(key, lambda kw=kw: _rapid(kind, use_gpu, **kw), use_gpu)
             except Exception:
                 log.exception("Local OCR warm-up failed")
         threading.Thread(target=run, daemon=True).start()

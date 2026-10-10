@@ -31,8 +31,22 @@ def fix_streams():
 def setup_logging():
     log_dir = os.path.join(app_dir(), "logs")
     os.makedirs(log_dir, exist_ok=True)
-    handlers = [RotatingFileHandler(os.path.join(log_dir, "lazyk.log"),
-                                    maxBytes=1_000_000, backupCount=3, encoding="utf-8")]
+    # A fresh log every session (like the translation record), so old logs never pile up.
+    # Only the last session is kept, as lazyk.previous.log: after a crash it is still there to send.
+    path = os.path.join(log_dir, "lazyk.log")
+    prev = os.path.join(log_dir, "lazyk.previous.log")
+    for name in os.listdir(log_dir):
+        if name.startswith("lazyk.log.") or name.startswith("lazyk.previous.log"):
+            try:
+                os.remove(os.path.join(log_dir, name))  # rotated parts of older sessions
+            except OSError:
+                pass
+    try:
+        if os.path.exists(path):
+            os.replace(path, prev)
+    except OSError:
+        pass
+    handlers = [RotatingFileHandler(path, maxBytes=2_000_000, backupCount=1, encoding="utf-8")]  # ≤ 4 MB per session
     if sys.stderr and not getattr(sys, "frozen", False):
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, handlers=handlers,

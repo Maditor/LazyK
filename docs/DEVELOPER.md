@@ -50,7 +50,7 @@ Pages already translated come back instantly (image-hash cache, no API call).
 
 ## Toolbar
 
-A small dark bar stays on top of every window (top-centre the first time; drag it by the `⋮⋮` grip or
+A small dark bar stays on top of every window (top-center the first time; drag it by the `⋮⋮` grip or
 the logo, the position is remembered). It never takes keyboard focus from the browser and never shows
 up in screenshots, so it is never translated. Menus open upwards when the bar sits at the bottom.
 
@@ -60,11 +60,11 @@ up in screenshots, so it is never translated. Menus open upwards when the bar si
 
 | Part | What it does |
 |---|---|
-| ● + text | Running. Green = on, blue = scanning, purple = translating, grey = paused, red = error |
+| ● + text | Running. Green = on, blue = scanning, purple = translating, gray = paused, red = error |
 | Server chip | Pick server and model, auto-switch toggles, API keys |
 | ↻ ❚❚ 👁 | Translate now · pause/resume · show/hide overlay |
 | ⛶ | Draw a frame around the comic page (amber when your frame is used) |
-| ⚙ | Settings (short top level, submenus for the rest): Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size, colours, Box & overlay ›), OCR device ›, Read aloud ›, Hotkeys ›, More › (translation record, taskbar, developer mode), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
+| ⚙ | Settings (short top level, submenus for the rest): Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size, colors, Box & overlay ›), OCR device ›, Read aloud ›, Hotkeys ›, More › (translation record, taskbar, developer mode), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
 | `‹` / `✕` | Collapse (keeps ● and ↻ ❚❚ 👁 ⛶) / quit |
 
 ## Capture frame (Region)
@@ -77,8 +77,8 @@ menus, comments or a busy background next to the page: only the page is sent, at
 ## Text layout
 
 * **Bubble cleaning:** when a bubble's outline is found, its inside is painted clean following the real
-  outline (like a scanlation), in the bubble's own tone: white bubbles use your colours, grey bubbles stay
-  grey, black bubbles stay black with white text.
+  outline (like a scanlation), in the bubble's own tone: white bubbles use your colors, gray bubbles stay
+  gray, black bubbles stay black with white text.
 * **Text follows the bubble:** every line is as wide as the bubble is at that height, so an oval bubble
   gets short top/bottom lines and a wide middle (bread shape) and almost all of its room is used.
 * **Tight line spacing** (1.16 × font size) so more lines fit.
@@ -94,7 +94,7 @@ menus, comments or a busy background next to the page: only the page is sent, at
 run.bat --demo
 ```
 Click the browser, press `Alt+T`. Five white boxes appear about 20 px inside the four corners and the
-centre of the **page area** (below the address bar). If they sit exactly there on every monitor and
+center of the **page area** (below the address bar). If they sit exactly there on every monitor and
 scaling, the capture area and DPI mapping are correct. No API calls are made.
 
 Offline check of the model's boxes, without the overlay:
@@ -127,7 +127,7 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `hotkey_toolbar` | `alt+shift+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Hotkeys → Show / hide toolbar key…** |
 | `taskbar_icon` | `true` | Taskbar button (right-click → Close window quits; a click shows the toolbar). Hidden together with the toolbar |
 | `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |
-| `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; auto-detect the background colour for the overlay in every layout (VN: `vn.frame_colors`; manga / webtoon: `refine.attach_colors`, a ring around each text box) |
+| `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; auto-detect the background color for the overlay in every layout (VN: `vn.frame_colors`; manga / webtoon: `refine.attach_colors`, a ring around each text box) |
 | `hover_hide` | `true` | Mouse over a translated box hides that box until the mouse leaves |
 | `hide_on_scroll` | `true` | |
 | `local_gpu`, `local_gpu_id` | `false`, `0` | Local OCR on a graphics card (DirectML) or the CPU, and which card (DirectML device number = DXGI adapter order). Set from ⚙ → OCR device, which lists the cards found by `app/gpus.py` |
@@ -174,7 +174,7 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
   missing commas and truncated output, and retries once.
 - **Translation:** one text-only call per page, numbered lines in/out, with the previous page's lines as
   context for consistent pronouns. Missing lines are retried once.
-- **Overlay:** borderless topmost Tk window with a colour key, plus `WS_EX_LAYERED | WS_EX_TRANSPARENT`
+- **Overlay:** borderless topmost Tk window with a color key, plus `WS_EX_LAYERED | WS_EX_TRANSPARENT`
   (clicks and wheel go to the browser), `WS_EX_NOACTIVATE` (never steals focus) and
   `WDA_EXCLUDEFROMCAPTURE` (never appears in its own screenshots). Text is fitted by trying font sizes
   from max to min with word wrap; narrow vertical-Japanese boxes are widened.
@@ -194,7 +194,7 @@ app/winapi.py        DPI awareness, window rects, click-through styles
 app/api.py           Gemini + Cloudflare clients, model/server auto-switch, connection test
 app/api_dialog.py    API & Models window
 app/popup.py         dark dropdown menu
-app/theme.py         shared colours, fonts, flat buttons, switches
+app/theme.py         shared colors, fonts, flat buttons, switches
 app/ocr.py           slicing, OCR prompt, JSON parsing, reading order, dedupe
 app/refine.py        page trim, box order detection, snap boxes to text / bubbles (OpenCV)
 app/translate.py     page translation prompt + numbered-line parsing
@@ -234,21 +234,21 @@ app/preview.py       PIL rendering for --image
 
 The comic-page reader (detect -> group -> join) misread dialogue boxes, so VN mode has its own:
 
-1. Border in the box colour around the frame (text touching the edge is otherwise not detected); text under
+1. Border in the box color around the frame (text touching the edge is otherwise not detected); text under
    22 px is enlarged first.
 2. Detected pieces that share a vertical band are one row. A row made of several pieces is read again as a
    whole line by a separate rec-only RapidOCR instance (`_rapid(kind, use_gpu, rec_only=True)`; never call a
    normal engine with `use_det=False`, it corrupts its later calls). This removes scrambled / duplicated /
    clipped words.
 3. First row = speaker name only if it is short, has no sentence end, and is set apart (gap / size / indent /
-   brackets / own colour). `read_vn` returns `{name, text, trace}`; the trace is logged ("VN OCR ...").
+   brackets / own color). `read_vn` returns `{name, text, trace}`; the trace is logged ("VN OCR ...").
 4. A manual (hotkey) re-scan in VN mode skips the image cache; cache key bumped to `v6`.
 
 ## Overlay look: background opacity / blur
 
 `overlay_opacity` (0-100 %, 100 = solid, the old look) and `overlay_blur` (px). Tk canvases have no alpha or
 blur, so a see-through box is a picture (`overlay.glass_image`): a screenshot of the screen under the overlay,
-blurred, tinted with the box colour, rounded corners painted in KEY_COLOR. The screenshot is taken while the
+blurred, tinted with the box color, rounded corners painted in KEY_COLOR. The screenshot is taken while the
 overlay is hidden and reused on re-render. Speech-bubble polygons (manga) stay solid.
 In visual novel mode the status pill is never shown (it sat at the frame's top-right corner, in the middle of
 the game); the toolbar shows all states and errors.
@@ -307,7 +307,7 @@ Settings has no hide button: ⚙ → **Hotkeys → Show / hide toolbar key…** 
 ## Blur (v30)
 
 - `overlay_blur` is the screen seen through a box (`overlay.glass_image`), so it only shows when `overlay_opacity < 100`; at 100 the box is solid and blur had no effect. Typing a blur above 0 now sets the opacity to 75% if it was 100.
-- A Gaussian blur keeps the average colour, so the auto-picked box colour (`vn_game_colors`, `bubble_colors`) and text colour are the same at any blur radius; they are chosen from the unblurred capture and blur only changes what shows through.
+- A Gaussian blur keeps the average color, so the auto-picked box color (`vn_game_colors`, `bubble_colors`) and text color are the same at any blur radius; they are chosen from the unblurred capture and blur only changes what shows through.
 - Cleaned manga bubbles (`poly`) stay solid paper on purpose.
 - Opacity and blur are visual novel only: the two menu entries show only when `layout == "vn"`, and `overlay.show_items` paints solid boxes in every other layout.
 - The Read & translate menu (`Toolbar.open_server_menu`) is persistent like Settings: it is a builder that is re-run after every pick, stays open until Esc, its button or a click outside, and only the items that open a dialog (`Local OCR models…`, `API keys & models…`, a server without a key) use mode `"close"`.
@@ -323,7 +323,7 @@ Settings has no hide button: ⚙ → **Hotkeys → Show / hide toolbar key…** 
 Auto mode used to rely only on the pynput low-level mouse hook (`WM_MOUSEWHEEL`). That misses
 precision-touchpad scrolling in Chromium (DirectManipulation sends no wheel messages), scrollbar drags,
 and a hook that Windows silently removes after a slow callback. `PageWatcher` grabs the watched page
-(120 px wide grey copy) every 120 ms and reports `("pagemove", hwnd)` when the content shifted
+(120 px wide gray copy) every 120 ms and reports `("pagemove", hwnd)` when the content shifted
 vertically across most of the width (row profiles in 4 bands, best shift vs. no shift). Overlay
 boxes are masked, and two looks are only compared when `overlay.version` and `busy` are unchanged, so
 the translation appearing / hover-hide never count as a scroll. Animations (ads, video) change pixels
