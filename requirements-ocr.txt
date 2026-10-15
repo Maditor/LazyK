@@ -1,0 +1,12 @@
+# Local OCR engine dependencies — 64-bit Windows only (no 32-bit wheels).
+# setup.bat installs this file, then rapidocr and piper-tts with --no-deps, only on a 64-bit Python.
+onnxruntime-directml>=1.18; sys_platform == "win32"
+onnxruntime>=1.18; sys_platform != "win32"
+jaconv>=0.3
+pyclipper>=1.2
+shapely>=1.7.1,!=2.0.4
+PyYAML
+omegaconf
+colorlog
+tqdm
+six

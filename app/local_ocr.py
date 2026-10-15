@@ -158,6 +158,22 @@ def _download(url, dest, sha, cancel, progress):
 
 
 # ---------------------------------------------------------------- onnxruntime
+_AVAIL = {"v": None}
+
+
+def available():
+    """True when the local OCR engine can actually run here. It can't on 32-bit Windows: onnxruntime
+    (and so rapidocr) ship only 64-bit wheels, so setup.bat skips them there."""
+    if _AVAIL["v"] is None:
+        try:
+            import onnxruntime  # noqa: F401
+            import rapidocr      # noqa: F401
+            _AVAIL["v"] = True
+        except Exception:  # noqa: BLE001
+            _AVAIL["v"] = False
+    return _AVAIL["v"]
+
+
 def gpu_name():
     """'DirectML' / 'CUDA' when a GPU provider is installed, else ''."""
     try:
@@ -345,11 +361,13 @@ def _divided(gray, A, B, vertical):
     return bool((dark > 0.3).any())
 
 
-def _group_lines(lines, cjk_join, gray=None):
+def _group_lines(lines, cjk_join, gray=None, owner=None, bubbles=None):
     """Text lines -> blocks: lines stacked close together (or side-by-side columns) are one block,
-    unless a bubble outline runs between them."""
+    unless a bubble outline runs between them. owner[i]: the bubble (found by bubbles.find) that holds
+    line i, or -1: lines of one bubble are always one block, lines of different bubbles never are."""
     n = len(lines)
     parent = list(range(n))
+    owner = owner if owner is not None else [-1] * n
 
     def find(i):
         while parent[i] != i:
@@ -361,6 +379,10 @@ def _group_lines(lines, cjk_join, gray=None):
         A = lines[a]["box"]
         for b in range(a + 1, n):
             B = lines[b]["box"]
+            if owner[a] >= 0 or owner[b] >= 0:
+                if owner[a] == owner[b]:
+                    parent[find(a)] = find(b)  # same bubble: one block, however the lines are spaced
+                continue  # different bubbles (or a bubble and free text): never joined
             vert_a, vert_b = (A[3] - A[1]) > 1.5 * (A[2] - A[0]), (B[3] - B[1]) > 1.5 * (B[2] - B[0])
             if vert_a and vert_b:  # vertical columns side by side
                 t = min(A[2] - A[0], B[2] - B[0])
@@ -382,15 +404,34 @@ def _group_lines(lines, cjk_join, gray=None):
                 parent[find(a)] = find(b)
     groups = {}
     for i in range(n):
-        groups.setdefault(find(i), []).append(lines[i])
+        groups.setdefault(find(i), []).append(i)
     blocks = []
-    for g in groups.values():
-        vertical = all((l["box"][3] - l["box"][1]) > 1.5 * (l["box"][2] - l["box"][0]) for l in g)
+    for gi in groups.values():
+        g = []
+        for l in sorted((lines[i] for i in gi), key=lambda l: -l.get("score", 0)):
+            if not any(_same_spot(l["box"], k["box"]) for k in g):  # one line read twice
+                g.append(l)
+        grp = owner[gi[0]]
+        bub = bubbles[grp] if bubbles and grp >= 0 else None
+        free = bool(bub and bub.get("free"))  # the bubble model's free-text area (lettering on the art)
+        if free:
+            bub = None
+        # vertical columns (Japanese): most of the text runs top to bottom (a short "…" line may not)
+        vertical = sum(l["box"][3] - l["box"][1] for l in g) > 1.3 * sum(l["box"][2] - l["box"][0] for l in g) \
+            if bub is not None else all((l["box"][3] - l["box"][1]) > 1.5 * (l["box"][2] - l["box"][0]) for l in g)
         g.sort(key=(lambda l: -l["box"][2]) if vertical else (lambda l: (l["box"][1], l["box"][0])))
         joiner = "" if cjk_join else " "
-        blocks.append({"text": joiner.join(l["text"] for l in g),
-                       "box": [min(l["box"][0] for l in g), min(l["box"][1] for l in g),
-                               max(l["box"][2] for l in g), max(l["box"][3] for l in g)]})
+        block = {"text": joiner.join(l["text"] for l in g),
+                 "box": [min(l["box"][0] for l in g), min(l["box"][1] for l in g),
+                         max(l["box"][2] for l in g), max(l["box"][3] for l in g)]}
+        if bub is not None:
+            block["pre_bubble"] = bub
+        if grp >= 0 and bubbles and bubbles[grp] is not None and bubbles[grp].get("model"):
+            # what the overlay must hide: the original lines and the model's text areas of this group
+            block["cover"] = [list(l["box"]) for l in g] + [list(c) for c in bubbles[grp].get("cover", [])]
+            block["model_group"] = grp  # placed by the bubble model: never joined with another group
+            block["model_free"] = free
+        blocks.append(block)
     return blocks
 
 
@@ -402,6 +443,27 @@ def _group_lines(lines, cjk_join, gray=None):
 _VN_END = re.compile(r"[.!?…。！？\"”」』)）]$")
 _VN_BRACKETS = "【】[]「」『』()（）<>《》:："
 _VN_OPEN, _VN_CLOSE = "([（「『【《<", ")]）」』】》>"
+
+
+def _find_bubbles(gray, lines):
+    """Bubbles of the page (white ones, then dark ones for the lines still outside any bubble)."""
+    from . import bubbles
+    boxes = [l["box"] for l in lines]
+    try:
+        found, owner = bubbles.find(gray, boxes)
+        left = [i for i, o in enumerate(owner) if o < 0]
+        if left:
+            dark, own2 = bubbles.find(gray, [boxes[i] for i in left], invert=True)
+            for k, i in enumerate(left):
+                if own2[k] >= 0:
+                    owner[i] = len(found) + own2[k]
+            for b in dark:
+                b["lines"] = [left[k] for k in b["lines"]]
+            found = found + dark
+        return owner, found
+    except Exception:  # never lose the page over this: group by distance as before
+        log.exception("Bubble detection failed")
+        return [-1] * len(lines), []
 
 
 def _name_bracketed(t):
@@ -580,6 +642,18 @@ class LocalOcr:
             raise RuntimeError("Local OCR: download the Korean model first (server menu → Local OCR models…)")
         bgr = np.ascontiguousarray(np.asarray(img.convert("RGB"))[:, :, ::-1])
         use_mocr = src in ("ja", "auto") and settings["local_manga_ocr"] and pack_ready("mocr")
+        det_job = None
+        if settings["bubble_model"]:
+            from concurrent.futures import Future, ThreadPoolExecutor
+            from . import bubble_model
+            if bubble_model.installed() and not use_gpu:
+                # on the CPU the bubble model runs at the same time as the text reader (it needs only the
+                # picture); on the graphics card one after the other (DirectML runs are kept apart)
+                det_job = ThreadPoolExecutor(max_workers=1).submit(bubble_model.detect, img, use_gpu)
+            elif bubble_model.installed():
+                det_job = Future()
+                det_job.set_result(None)
+                det_job.later = True
         with self._lock:
             # 1. Recognizer: the chosen language first ('auto': the one that won last time). If it reads
             #    the page badly, the other one gets a try: a Korean page with 'Japanese' selected still works.
@@ -605,7 +679,33 @@ class LocalOcr:
                             "Download the Korean model in Local OCR models.", cover)
             cjk = kind == "multi" and src != "en"
             gray = np.asarray(img.convert("L"))
-            blocks = _group_lines(lines, cjk_join=cjk and not _latin_page(lines), gray=gray)
+            dets = None
+            if det_job is not None:
+                try:
+                    dets = bubble_model.detect(img, use_gpu) if getattr(det_job, "later", False) \
+                        else det_job.result()
+                except Exception:
+                    log.exception("Bubble model failed")
+            if dets is not None:  # the bubble model: its bubbles and free-text areas group the lines
+                from . import bubbles
+                found, owner, empty = bubbles.from_model(gray, [l["box"] for l in lines], dets, bgr[:, :, ::-1],
+                                                     ellipse=settings["layout"] == "webtoon")
+                if empty:  # bubbles the model saw but no line was read in: read them closer up
+                    extra = [l for l in self._reread_regions(kind, bgr, gray, empty, use_gpu, cancel)
+                             if not any(_same_spot(l["box"], o["box"]) for o in lines)]  # read twice
+                    if extra:
+                        lines = lines + extra
+                        found, owner, _e = bubbles.from_model(gray, [l["box"] for l in lines], dets, bgr[:, :, ::-1],
+                                                     ellipse=settings["layout"] == "webtoon")
+                for f in found:
+                    f["model"] = True
+            else:
+                lines = lines + self._reread_empty(kind, bgr, gray, lines, use_gpu, cancel)
+                owner, found = _find_bubbles(gray, lines)
+            if settings["layout"] == "manga":  # lettering on the art that is not dialogue
+                lines, owner = _drop_art_text(lines, owner, found, gray)
+            blocks = _group_lines(lines, cjk_join=cjk and not _latin_page(lines), gray=gray,
+                                  owner=owner, bubbles=found)
 
             # 2. Japanese with manga-ocr: re-read every block with it
             if use_mocr and kind == "multi" and blocks and _japanese_page(lines):
@@ -625,6 +725,43 @@ class LocalOcr:
                         b["text"] = text
                 log.info("manga-ocr: %d blocks in %.2fs", len(blocks), time.time() - t)
             return [dict(b, type="speech") for b in blocks]
+
+    def _reread_empty(self, kind, bgr, gray, lines, use_gpu, cancel):
+        """Bubbles with lettering but no line found by the page pass: read each one again, enlarged
+        (small or faint text in a bubble is what the page-wide detector misses)."""
+        from . import bubbles
+        try:
+            regions = bubbles.empty_bubbles(gray, [l["box"] for l in lines])
+        except Exception:
+            log.exception("Empty bubble search failed")
+            return []
+        return self._reread_regions(kind, bgr, gray, regions, use_gpu, cancel)
+
+    def _reread_regions(self, kind, bgr, gray, regions, use_gpu, cancel):
+        if not regions:
+            return []
+        import cv2
+        # the 'max' size limit keeps a crop as big as we make it (the page engine would blow it up to 736 px)
+        eng = self._get(kind + "_vn", lambda: _rapid(kind, use_gpu, vn=True), use_gpu)
+        H, W = gray.shape
+        found, t = [], time.time()
+        for x1, y1, x2, y2 in regions:
+            if cancel.is_set():
+                break
+            m = 6
+            X1, Y1, X2, Y2 = max(0, x1 - m), max(0, y1 - m), min(W, x2 + m), min(H, y2 + m)
+            crop = np.ascontiguousarray(bgr[Y1:Y2, X1:X2])
+            k = 2.0 if max(crop.shape[:2]) < 600 else 1.0
+            if k != 1.0:
+                crop = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
+            got = [l for l in _lines(eng(crop), min_score=0.6) if _wordy(l)]
+            for l in got:
+                b = l["box"]
+                l["box"] = [int(b[0] / k) + X1, int(b[1] / k) + Y1, int(b[2] / k) + X1, int(b[3] / k) + Y1]
+            found += got
+        log.info("Re-read %d bubble(s) the page pass missed: %d line(s) in %.2fs", len(regions), len(found),
+                 time.time() - t)
+        return found
 
     # -------------------------------------------------- visual novel text box
     def _vn_detect(self, kind, bgr, use_gpu, on_status):
@@ -738,6 +875,47 @@ class LocalOcr:
 
 _KANA = re.compile(r"[\u3040-\u30ff]")
 _CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
+def _same_spot(a, b):
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    small = min(max(1, (a[2] - a[0]) * (a[3] - a[1])), max(1, (b[2] - b[0]) * (b[3] - b[1])))
+    return ix * iy > 0.4 * small
+
+
+def _faint(gray, box):
+    """Low-contrast lettering: chalk on a blackboard, a poster or screen drawn in the background. Manga
+    lettering - black on paper, or white on black / dark tone - always stands out strongly."""
+    x1, y1, x2, y2 = [int(v) for v in box]
+    c = gray[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+    if c.size < 20:
+        return False
+    return float((c < 100).mean()) < 0.05  # lettering puts dark ink (or a dark ground) in ~10%+ of its box
+
+
+def _drop_art_text(lines, owner, found, gray):
+    """Manga page, outside the speech bubbles: faint background text (chalk, posters) and stray marks
+    (a clock's digit, one misread letter) are not translated."""
+    keep, own = [], []
+    dropped = []
+    for l, o in zip(lines, owner):
+        in_bubble = o >= 0 and found[o] is not None and not found[o].get("free")
+        if not in_bubble and (_faint(gray, l["box"]) or not _wordy(l)):  # bubble text is always kept
+            dropped.append(l["text"])
+            continue
+        keep.append(l)
+        own.append(o)
+    if dropped:
+        log.info("Skipped %d line(s) of background text: %s", len(dropped), " | ".join(dropped)[:120])
+    return keep, own
+
+
+def _wordy(line):
+    """A real line of lettering, not dots read as "1" or a lone unsure mark."""
+    t = "".join(line["text"].split())
+    letters = [c for c in t if c.isalpha()]
+    return bool(t) and len(letters) >= max(1, 0.5 * len(t)) and (len(t) > 1 or line["score"] >= 0.9)
 
 
 def _area(line):

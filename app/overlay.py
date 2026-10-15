@@ -139,7 +139,8 @@ class Overlay(_ClickThroughWindow):
 
     def text_box_mode(self):
         """The separate box is a visual novel option (manga / webtoon keep the translation on the bubbles)."""
-        return bool(self.settings["text_box"]) and self.settings["layout"] == "vn"
+        s = self.settings
+        return s["layout"] == "vn" and bool(s["text_box"])
 
     def sync_text_box(self):
         """Create / remove the separate box to follow the setting."""
@@ -215,14 +216,27 @@ class Overlay(_ClickThroughWindow):
             self._bg = None
         radius = s["corner_radius"] * scale
         outline = s["overlay_outline"] or ""
+        texts = []  # drawn after every background: no bubble's paint may cover another bubble's text
         for i, b in enumerate(boxes):
             tag = f"box{i}"
             first = len(self.canvas.find_all())
+            for c in b.get("covers") or ():  # the original lettering, also words the OCR did not read
+                self.canvas.create_rectangle(c[0], c[1], c[2], c[3], fill=b.get("fill", s["overlay_bg"]), outline="")
             if b["kind"] == "poly":
                 # Clean the inside of the bubble, following its real outline
                 self.canvas.create_polygon(b["poly"], fill=b["fill"], outline="")
                 pts = b["poly"]
                 self._hit.append((tag, b["rect"], list(zip(pts[0::2], pts[1::2]))))
+            elif b["kind"] == "free":
+                # text on the art: cover only the original lettering and the translation's own lines
+                # (a tight box around them), not a big box over the drawing
+                r = b["rect"]
+                px1, py1, px2, py2 = b["patch"] or r
+                rr = min(radius, 4 * scale)
+                if b["patch"]:
+                    rounded_rect(self.canvas, px1, py1, px2, py2, rr, fill=b["fill"], outline="")
+                rounded_rect(self.canvas, r[0], r[1], r[2], r[3], rr, fill=b["fill"], outline="")
+                self._hit.append((tag, (min(r[0], px1), min(r[1], py1), max(r[2], px2), max(r[3], py2)), None))
             else:
                 x1, y1, x2, y2 = b["rect"]
                 self._hit.append((tag, b["rect"], None))
@@ -247,12 +261,14 @@ class Overlay(_ClickThroughWindow):
                 else:
                     rounded_rect(self.canvas, x1, y1, x2, y2, radius, fill=b.get("fill", s["overlay_bg"]),
                                  outline=outline, width=1 if outline else 0)
+            texts.append((tag, b))
+            for item in self.canvas.find_all()[first:]:
+                self.canvas.addtag_withtag(tag, item)
+        for tag, b in texts:  # one layer of text above all the boxes; each line keeps its box's tag (hover)
             font = self._font(b["size"])
             for line, cx, cy in b["lines"]:
                 self.canvas.create_text(cx, cy, text=line, font=font, fill=b.get("ink", s["overlay_fg"]),
-                                        anchor="center")
-            for item in self.canvas.find_all()[first:]:
-                self.canvas.addtag_withtag(tag, item)
+                                        anchor="center", tags=(tag,))
         self.show()
         if s["hover_hide"]:
             # the mouse may already be over the new box: hide it before Tk paints, so it never flashes

@@ -244,6 +244,37 @@ def sanitize(text: str) -> str:
     return " ".join(text.split())
 
 
+_LAUGH = re.compile(r"\b([HhKk])([aeiouy]{1,2})(?:[hk]\2){1,6}h?\b")
+
+
+def _laugh(m):
+    """Laughter written as one word ("Hehehe", "Hahaha", "Hihi", "kkk"-like) is read as a strange
+    single syllable by the local voice. Split it into short syllables it can say."""
+    word = m.group(0)
+    syl = m.group(1) + m.group(2)
+    n = max(2, min(4, round(len(word) / len(syl))))
+    return " ".join([syl] + [syl.lower()] * (n - 1))
+
+
+def voice_text(text: str) -> str:
+    """Text as it should be heard. The local voice (espeak rules) says dots it cannot place: an ellipsis
+    at the start ("...Thật sao?"), "Ừ.. có hơi" or a lone "." is read out as "chấm" / "dot". So:
+    leading dots and symbols go, two or more dots (or …) inside become a short pause (a comma),
+    and *action*, ~ and similar marks are dropped."""
+    t = unicodedata.normalize("NFC", text or "")
+    t = t.replace("\u2026", "...")
+    t = re.sub(r"[*_~#=<>\[\]{}|^`\"“”„«»「」『』—–]+", " ", t)
+    t = re.sub(r"(?<=\w)-(?=\s|$)", "", t)                 # cut-off word: "Không phải-"
+    t = re.sub(r"\b([EeAaUu])(h[aeiou](?:h[aeiou])+)\b", lambda m: m.group(1) + " " + m.group(2), t)  # "Ehehe"
+    t = _LAUGH.sub(_laugh, t)                              # "Hehehe" -> "He he he" (said as a word, not mumbled)
+    t = re.sub(r"^[\W_]+", "", t)                       # nothing but letters / digits at the start
+    t = re.sub(r"\s*\.{2,}\s*(?=\w)", ", ", t)            # "Ừ.. có" -> "Ừ, có"
+    t = re.sub(r"\.{2,}", ".", t)                          # "hơi..." at the end -> "hơi."
+    t = re.sub(r"\s+([,.!?])", r"\1", t)
+    t = re.sub(r"([,.!?])(?:\s*[,.]){1,}", r"\1", t)      # ", ." / ".," leftovers
+    return " ".join(t.split()).strip(" ,")
+
+
 def split_sentences(text: str) -> list:
     parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text)]
     return [p for p in parts if p and _HAS_SPEECH.search(p)]
@@ -515,6 +546,12 @@ class Speaker:
         t0 = time.time()
         first = True
         speed, vol = speed_pct(self.s), volume_pct(self.s)
+        raw = list(texts)
+        texts = [v for v in (voice_text(t) for t in texts) if _HAS_SPEECH.search(v)]
+        # exactly what the voice gets (repr: hidden characters show up as \u....)
+        log.info("TTS: local voice reads %s (from %s)", [t[:80] for t in texts], [t[:80] for t in raw])
+        if not texts:
+            return
         # The voice is made a sentence at a time: a long first sentence is cut at a comma so the first
         # sound comes sooner (the rest is made while it plays, with no gap).
         sents = split_sentences(texts[0]) or [texts[0]]

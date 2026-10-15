@@ -34,11 +34,11 @@ model and model list (editable, one per line).
 
 | Key | Action |
 |---|---|
-| `Alt+Shift+A` | Switch **Auto** ↔ **Hotkey** mode (saved) |
+| `Ctrl+Alt+M` | Switch **Auto** ↔ **Hotkey** mode (saved) |
 | `Alt+T` | Translate the active window now (works in both modes) |
 | `Esc` | Hide the overlay |
-| `Alt+Shift+T` | Pause / resume the tool |
-| `Alt+Shift+H` | Hide / show the toolbar (one shared key; also in the tray menu) |
+| `Ctrl+Alt+P` | Pause / resume the tool |
+| `Ctrl+Alt+H` | Hide / show the toolbar (one shared key; also in the tray menu) |
 | `Ctrl+Alt+Q` | Quit (also: tray icon → Quit LazyK) |
 
 **Auto mode (default):** just read. When you scroll a browser (wheel, PageUp/PageDown, Space, arrows)
@@ -69,7 +69,7 @@ up in screenshots, so it is never translated. Menus open upwards when the bar si
 
 ## Capture frame (Region)
 
-Click ⛶ (or `Alt+Shift+R`), the screen dims, drag a frame tightly around the comic page. The frame is
+Click ⛶ (or `Ctrl+Alt+R`), the screen dims, drag a frame tightly around the comic page. The frame is
 saved and used for every capture (also after restart) until you choose ⚙ → Capture → Browser page.
 In Auto mode only wheel scrolling inside the frame triggers a scan. Use it when the reader shows
 menus, comments or a busy background next to the page: only the page is sent, at full resolution.
@@ -110,7 +110,7 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 
 | Key | Default | Notes |
 |---|---|---|
-| `mode` | `auto` | `auto` or `hotkey` (or press `Alt+Shift+A`) |
+| `mode` | `auto` | `auto` or `hotkey` (or press `Ctrl+Alt+M`) |
 | `scroll_delay_ms` | `700` | Quiet time after the last scroll before capturing |
 | `auto_apps` | browsers | Process names that trigger Auto; `[]` = any app |
 | `server` | `gemini` | `gemini` or `cloudflare` |
@@ -123,14 +123,16 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\``. `hotkey_translate` may also be `mouse3` / `mouse4` / `mouse5` (wheel click / side buttons, optionally with modifiers); set it from ⚙ → Hotkeys → Translate key… |
 | `layout` = `vn` | | Visual novel mode: `app/vn.py` (one small read + one translation per line, no tiles / bubbles) |
 | `vn_region` | `null` | Text box frame (physical px), separate from `region` |
-| `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Alt+Shift+V`) |
-| `hotkey_toolbar` | `alt+shift+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Hotkeys → Show / hide toolbar key…** |
+| `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Ctrl+Alt+V`) |
+| `hotkey_toolbar` | `ctrl+alt+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Hotkeys → Show / hide toolbar key…** |
 | `taskbar_icon` | `true` | Taskbar button (right-click → Close window quits; a click shows the toolbar). Hidden together with the toolbar |
 | `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |
+| `tb_fg`, `tb_bg`, `tb_opacity`, `tb_blur` | `#ffffff`, `#000000`, `100`, `0` | The Visual novel Text box's own look (separate from `overlay_*`); the Look menu edits these while Text box is on |
+| `vn_ignore_motion` | `false` | Watcher compares only text strokes (sharp pixels in the text's tone, `vn._ink`) so a moving scene behind a see-through box is not "text changing"; `false` = compare the whole grey image (`vn_change_pct` applies) |
 | `vn_max_width`, `vn_game_colors` | `1000`, `true` | Image width sent to the AI; auto-detect the background color for the overlay in every layout (VN: `vn.frame_colors`; manga / webtoon: `refine.attach_colors`, a ring around each text box) |
 | `hover_hide` | `true` | Mouse over a translated box hides that box until the mouse leaves |
 | `hide_on_scroll` | `true` | |
-| `local_gpu`, `local_gpu_id` | `false`, `0` | Local OCR on a graphics card (DirectML) or the CPU, and which card (DirectML device number = DXGI adapter order). Set from ⚙ → OCR device, which lists the cards found by `app/gpus.py` |
+| `local_gpu`, `local_gpu_id`, `local_gpu_auto` | `true`, `0`, `true` | Local OCR + bubble model on a graphics card (DirectML) or the CPU, and which card (DirectML device number = DXGI adapter order). With `local_gpu_auto` the card with the most video memory (the dedicated one) is picked once `app/gpus.py` has listed them; choosing a device in ⚙ → OCR device turns it off |
 | `tts_enabled` | `false` | Read the translation aloud after each fresh translation (⚙ → Read aloud). Not read again for cached pages |
 | `tts_voice` | `auto` | `auto` = by `target_lang` (Vietnamese → `vi-VN-HoaiMyNeural`), or any Edge voice name, e.g. `vi-VN-NamMinhNeural` |
 | `tts_speed`, `tts_volume` | `100`, `100` | Speed 50–200 % (sent to the service as `rate`), volume 0–100 % (MCI `setaudio`, so never above the system volume) |
@@ -197,6 +199,14 @@ app/popup.py         dark dropdown menu
 app/theme.py         shared colors, fonts, flat buttons, switches
 app/ocr.py           slicing, OCR prompt, JSON parsing, reading order, dedupe
 app/refine.py        page trim, box order detection, snap boxes to text / bubbles (OpenCV)
+app/bubbles.py       page-level bubble finder (manga / webtoon): closes dashed / cloud / spiky outlines by
+                     thickening dark lines (seal 1-5 px), white then light-gray then dark bubbles; lines of one
+                     bubble are grouped together, never across bubbles; empty_bubbles() = bubbles with letters but
+                     no detected line (re-read enlarged by LocalOcr._reread_empty)
+app/bubble_model.py  optional RT-DETR comic text & bubble detector (ONNX, exported from the HuggingFace model
+                     into the models folder as comic_bubbles.onnx + .json). When installed (shipped in models\ next to the exe / main.py, else the user models folder) it is always used:
+                     bubbles.from_model() groups OCR lines by the model's bubble / text_free boxes and cuts each
+                     bubble's paper at its box (_shape_in_box; ellipse for toned bubbles); empty model bubbles are re-read
 app/translate.py     page translation prompt + numbered-line parsing
 app/textfit.py       bread-shaped line breaking, orphan rules, box layout (pure)
 app/pipeline.py      capture, hash cache, OCR → translate, debug dump
@@ -303,6 +313,7 @@ Settings has no hide button: ⚙ → **Hotkeys → Show / hide toolbar key…** 
 - `gtranslate` keeps a 500-line cache and skips the thread pool for a single line.
 - The log shows `VN OCR timing: detect / rows / total` for every scan.
 - `local_gpu` now defaults to the CPU; `settings.json` is switched once (`_gpu_cpu_default`).
+- With the bubble model the graphics card is faster again: `local_gpu` defaults to on with the dedicated card picked automatically (`local_gpu_auto`); `settings.json` is switched once (`_gpu_default`).
 
 ## Blur (v30)
 

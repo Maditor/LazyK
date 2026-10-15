@@ -16,7 +16,8 @@ KEYS = [
     "source_lang", "target_lang", "ocr_engine", "translator", "server", "local_gpu", "local_gpu_id",
     # look
     "font_family", "font_bold", "font_min", "auto_text_size", "overlay_fg", "overlay_bg", "vn_game_colors",
-    "overlay_opacity", "overlay_blur", "hover_hide", "text_box", "text_box_rect",
+    "overlay_opacity", "overlay_blur", "hover_hide", "text_box", "text_box_rect", "vn_ignore_motion",
+    "tb_fg", "tb_bg", "tb_opacity", "tb_blur",
     # text to speech
     "tts_enabled", "tts_engine", "tts_speed", "tts_volume", "tts_voice",
 ]

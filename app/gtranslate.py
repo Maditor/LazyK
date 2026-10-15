@@ -8,7 +8,8 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import TimeoutError as FutureTimeout
 
 import requests
 
@@ -35,11 +36,7 @@ def _sess():
     global _session
     with _session_lock:
         if _session is None:
-            from requests.adapters import HTTPAdapter
-            s = requests.Session()
-            s.headers["User-Agent"] = UA
-            s.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=4))
-            _session = s
+            _session = _new_session()
         return _session
 
 
@@ -104,15 +101,26 @@ def _prepare(text):
     return t
 
 
-def _get(name, url, params):
-    if _rest_until.get(name, 0) > time.time():
-        raise TranslateError(f"{name} is resting after a block")
+HEDGE_S = 0.9  # no answer by then: the same request again on a new connection, the first answer wins
+_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="gt")
+
+
+def _new_session():
+    from requests.adapters import HTTPAdapter
+    s = requests.Session()
+    s.headers["User-Agent"] = UA
+    s.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=4))
+    return s
+
+
+def _get_once(name, url, params, sess=None):
     for attempt in range(2):
         try:
-            r = _sess().get(url, params=params, timeout=8)
+            r = (sess or _sess()).get(url, params=params, timeout=8)
         except requests.RequestException as e:
             # a kept-open connection the server already closed fails once: retry at once on a fresh one
-            _reset_session()
+            if sess is None:
+                _reset_session()
             if attempt:
                 raise TranslateError("Google Translate: network error") from e
             continue
@@ -126,6 +134,42 @@ def _get(name, url, params):
         except ValueError:
             return r.text
     raise TranslateError("Google Translate: no answer")
+
+
+def _get(name, url, params):
+    """One request. Now and then Google (or a stale kept-open connection) takes seconds to answer while
+    a new request is answered at once: after HEDGE_S the request is sent again on a fresh connection and
+    whichever answers first is used."""
+    global _session
+    if _rest_until.get(name, 0) > time.time():
+        raise TranslateError(f"{name} is resting after a block")
+    first = _pool.submit(_get_once, name, url, params)
+    try:
+        return first.result(timeout=HEDGE_S)
+    except FutureTimeout:
+        pass
+    fresh = _new_session()
+    second = _pool.submit(_get_once, name, url, params, fresh)
+    log.info("Google slow to answer: asked again on a new connection")
+    pending, err = {first, second}, None
+    while pending:
+        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+        for f in done:
+            try:
+                res = f.result()
+            except TranslateError as e:
+                err = e
+                continue
+            if f is second:  # the new connection works: keep it for the next pages
+                with _session_lock:
+                    old, _session = _session, fresh
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+            return res
+    raise err or TranslateError("Google Translate: no answer")
 
 
 def _one(text, sl, tl):

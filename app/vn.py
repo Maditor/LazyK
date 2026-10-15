@@ -11,11 +11,28 @@ import threading
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from . import winapi
 
 log = logging.getLogger(__name__)
+
+
+def looks_like_noise(text: str) -> bool:
+    """What OCR finds in a text box during a scene change: 2-3 stray capital letters such as "WI",
+    "NI", "MT" (bits of a background, a fading picture, a logo). Real short lines look different: they
+    have lowercase letters ("Ok", "Huh?") or punctuation ("NO!", "A-ah..."), or are CJK / Korean."""
+    t = text.strip()
+    letters = [c for c in t if c.isalpha()]
+    if not letters or len(letters) > 3:
+        return False
+    if any(not c.isascii() for c in letters):  # Japanese, Chinese, Korean, accented: keep
+        return False
+    if any(c.islower() for c in letters):
+        return False
+    if re.search(r"[.!?…~\-♪」』\"']", t):
+        return False
+    return t.upper() not in {"OK", "NO", "YES", "HEY", "OH", "AH", "UH", "UM", "HM", "EH", "I"}
 
 VN_MAX_TOKENS = 700
 # Change detection: the frame is shrunk to 256 px wide; a pixel counts as changed above DIFF_LEVEL, and
@@ -110,6 +127,14 @@ def run_vn(pipeline, client, img: Image.Image, cancel, on_status):
         if not src:
             log.info("VN OCR: nothing read (%s)", r["trace"])
             return []
+        if looks_like_noise(src):
+            log.info("VN OCR: ignored %r (a few capital letters: scene art or a transition, not dialogue)", src)
+            return []
+        scores = [x.get("score", 1.0) for x in (r.get("trace") or {}).get("rows") or []]
+        if scores and max(scores) < 0.8 and sum(c.isalpha() for c in src) <= 8:
+            # "ALIVI", "ZVWL", "1!!": a short read the OCR itself is unsure of = shapes in the picture
+            log.info("VN OCR: ignored %r (unsure read %.2f: not dialogue)", src, max(scores))
+            return []
         # what was read goes to the status line, so a wrong read is visible at once
         on_status("translating", f"Translating… “{src[:48]}{'…' if len(src) > 48 else ''}”")
         if mode == "local_google":
@@ -153,10 +178,44 @@ def _small(shot_img: Image.Image) -> np.ndarray:
     return np.asarray(g, dtype=np.int16)
 
 
+INK_WIDTH = 1280  # text strokes need about full resolution (small fonts vanish when shrunk)
+
+
+def _ink(shot_img: Image.Image) -> np.ndarray:
+    """Only the text: sharp strokes in the text's own tone (bright text on a dark box, dark text on a light
+    box). What moves behind a see-through box is dimmed by the box and blurry, so it is left out — the
+    watcher then reacts to the text, not to an animated background."""
+    w, h = shot_img.size
+    nw = min(INK_WIDTH, w)
+    g = shot_img.convert("L")
+    if nw != w:
+        g = g.resize((nw, max(4, round(nw * h / max(1, w)))), Image.BILINEAR)
+    a = np.asarray(g, dtype=np.int16)
+    hp = np.abs(a - np.asarray(g.filter(ImageFilter.BoxBlur(2)), dtype=np.int16))
+    m = float(np.median(a))
+    tone = (a > max(155, m + 95)) if m < 128 else (a < min(90, m - 100))
+    return (hp > 35) & tone
+
+
+def _grow(m):
+    p = np.pad(m, 1)
+    out = np.zeros_like(m)
+    for dy in range(3):
+        for dx in range(3):
+            out |= p[dy:dy + m.shape[0], dx:dx + m.shape[1]]
+    return out
+
+
 def differs(a, b, pct=0.3, ignore=None) -> bool:
     """ignore: boolean mask of pixels that do not count (the translation painted over the frame)."""
-    if a is None or b is None or a.shape != b.shape:
+    if a is None or b is None or a.shape != b.shape or a.dtype != b.dtype:
         return True
+    if a.dtype == bool:  # text maps: new / gone strokes, a one-pixel wobble does not count
+        changed = (a & ~_grow(b)) | (b & ~_grow(a))
+        if ignore is not None and ignore.shape == changed.shape:
+            changed = changed & ~ignore
+        n = int(changed.sum())
+        return n >= 8 and n > changed.size * 0.00005
     changed = np.abs(a - b) > DIFF_LEVEL
     if ignore is not None and ignore.shape == changed.shape:
         changed = changed[~ignore]
@@ -179,7 +238,8 @@ class VNWatcher(threading.Thread):
 
     def _active(self):
         a, s = self.app, self.app.s
-        return s["layout"] == "vn" and bool(s["vn_auto"]) and not a.paused and not a.selecting
+        return (s["layout"] == "vn" and bool(s["vn_auto"])
+                and not a.paused and not a.selecting)
 
     def _overlay_mask(self, reg, shape):
         """Developer mode: the translation is visible to the screen capture, so the watcher would see it as
@@ -231,7 +291,8 @@ class VNWatcher(threading.Thread):
                 x, y, w, h = reg
                 pct = float(s["vn_change_pct"])
                 shot = sct.grab({"left": int(x), "top": int(y), "width": int(w), "height": int(h)})
-                cur = _small(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
+                img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                cur = _ink(img) if s["vn_ignore_motion"] else _small(img)
                 now = time.time()
                 mk = self._overlay_mask(reg, cur.shape)
                 if mk is not None:
@@ -253,6 +314,13 @@ class VNWatcher(threading.Thread):
                     changing, t_change = True, now
                 prev, painted = cur, shown
                 stable_ms = int(s["vn_stable_ms"])
+                if s["tts_enabled"]:
+                    # read aloud: wait for the whole line (a half-typed line would be spoken, then cut)
+                    stable_ms = max(300, stable_ms)
+                else:
+                    # only shown: show it as soon as it holds still; a line still typing is simply
+                    # replaced by the full one a moment later
+                    stable_ms = max(100, int(stable_ms * 0.6))
                 if s.read_mode() == "ai":
                     stable_ms = max(350, stable_ms)  # a scan started too early (text still typing) costs quota
                 if changing and now - t_change >= stable_ms / 1000:

@@ -32,6 +32,24 @@ def fonts(root):
     }
 
 
+def style_dialog(win):
+    """Every LazyK dialog: dark title bar (like the dialog itself) and the light logo, which is readable
+    on it. Applied when the window first appears."""
+    try:
+        from .config import icon_path
+        win._lazyk_icon = tk.PhotoImage(file=icon_path(on_dark=True))
+        win.iconphoto(False, win._lazyk_icon)
+    except Exception:
+        pass
+
+    def mapped(e):
+        if e.widget is win and not getattr(win, "_lazyk_dark", False):
+            win._lazyk_dark = True
+            from . import winapi
+            winapi.dark_title_bar(win, BG, FG)
+    win.bind("<Map>", mapped, add="+")
+
+
 def setup_ttk(root):
     """Dark style for ttk widgets (Combobox, Scrollbar)."""
     st = ttk.Style(root)

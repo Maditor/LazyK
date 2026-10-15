@@ -2,22 +2,12 @@ mss>=9.0
 Pillow>=10.0
 numpy>=1.26,<3
 requests>=2.31
-edge-tts>=7.0  # optional: read the translation aloud
+edge-tts>=7.0  # optional: read the translation aloud (online voice)
 miniaudio>=1.59  # read aloud: gapless playback
-# Local voice: piper-tts is installed by setup.bat with --no-deps (it would add a second onnxruntime)
 pathvalidate>=3
 pynput>=1.7.6
 pystray>=0.19.5
 opencv-python-headless>=4.8
-# Local OCR. rapidocr itself is installed by setup.bat with --no-deps
-# (its own requirement, opencv-python, would clash with opencv-python-headless).
-onnxruntime-directml>=1.18; sys_platform == "win32"
-onnxruntime>=1.18; sys_platform != "win32"
-jaconv>=0.3
-pyclipper>=1.2
-shapely>=1.7.1,!=2.0.4
-PyYAML
-omegaconf
-colorlog
-tqdm
-six
+# Local OCR (onnxruntime + rapidocr) and the local Piper voice are installed by setup.bat only on
+# 64-bit Windows — see requirements-ocr.txt. They have no 32-bit wheels, so a 32-bit install skips them
+# and uses AI translation and the online voice instead.

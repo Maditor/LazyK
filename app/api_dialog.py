@@ -35,16 +35,10 @@ class ApiDialog:
         self.f = T.fonts(root)
         w = self.win = tk.Toplevel(root)
         w.title("LazyK · API & Models")
+        T.style_dialog(w)
         w.configure(bg=T.BG)
         w.resizable(False, False)
         w.attributes("-topmost", True)
-        try:
-            from .config import icon_path
-            from . import winapi
-            self._icon = tk.PhotoImage(file=icon_path(on_dark=not winapi.system_light_theme()))
-            w.iconphoto(False, self._icon)
-        except Exception:
-            pass
 
         self.vars = {k: tk.StringVar(value=str(settings[k] or "")) for srv in SERVERS for k, _, _ in FIELDS[srv]}
         self.model_vars = {srv: tk.StringVar(value=settings[f"{srv}_model"]) for srv in SERVERS}

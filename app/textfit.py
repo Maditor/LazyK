@@ -165,7 +165,7 @@ def tight(metrics):
     return lambda size: (metrics(size)[0], max(1, round(size * LINE_H)))
 
 
-def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
+def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True, tall=False):
     """Fit text inside a bubble outline, each line as wide as the bubble is at that height.
 
     Returns (size, [(line, cx, cy), ...]) or None.
@@ -176,6 +176,7 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
     if not valid or not text.split():
         return None
     top, bot = valid[0], valid[-1] + 1
+    shape_ratio = (bot - top) / max(1.0, float(max(widths)))
     tot = float(sum(widths))
     center = sum(i * w for i, w in enumerate(widths)) / tot  # width-weighted middle of the bubble
     for size in range(fmax, fmin - 1, -1):
@@ -209,10 +210,16 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
                 continue
             if first is None:
                 first = n
-            cost = res[1] + EXTRA_LINE_COST * (n - first)
+            if tall:
+                # tall bubbles (manga, drawn for vertical Japanese): a block shaped like the bubble -
+                # more, shorter lines filling it top to bottom
+                bw = max(measure(l) for l in res[0]) or 1.0
+                cost = 0.3 * res[1] + abs(math.log(max(1e-3, n * lh / bw) / max(1e-3, shape_ratio)))
+            else:
+                cost = res[1] + EXTRA_LINE_COST * (n - first)
             if best_cost is None or cost < best_cost:
                 best, best_cost = [(l, cx, cy) for l, (cx, cy) in zip(res[0], centers)], cost
-            if n >= first + 2:
+            if n >= first + (8 if tall else 2):
                 break
         if best:
             return size, best
@@ -220,13 +227,64 @@ def fit_shape(text, shape, fmin, fmax, pad, metrics, strict=True):
 
 
 def bubble_colors(shape, settings):
-    """Paint a cleaned bubble in its own paper tone: white bubbles use the user's colors,
-    gray or black bubbles keep their tone with contrasting text."""
+    """White bubbles use the user's colors; a gray (toned) or black bubble keeps its tone, darkened as
+    needed, with white text."""
     level = int(shape.get("fill", 255))
     if level >= 235 and not shape.get("invert"):
         return settings["overlay_bg"], settings["overlay_fg"]
+    color = shape.get("color")
+    if color and not shape.get("invert"):
+        lum = _lum(color)
+        if lum and max(lum[1]) - min(lum[1]) >= 0.12:  # a colored bubble (webtoon): keep its color
+            return color, "#111111"
     fill = "#{0:02x}{0:02x}{0:02x}".format(max(0, min(255, level)))
-    return fill, ("#ffffff" if level < 128 else "#111111")
+    return fill, "#ffffff"
+
+
+def _lum(color):
+    try:
+        c = color.lstrip("#")
+        if len(c) == 3:
+            c = "".join(ch * 2 for ch in c)
+        rgb = [int(c[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    except Exception:
+        return None
+    lin = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in rgb]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2], rgb
+
+
+READABLE = 7.5  # contrast ratio (WCAG) the translation keeps against its box
+WHITE_PAPER = 0.75  # luminance from which a box counts as white paper (about #e1e1e1)
+
+
+def readable(fill, ink):
+    """Colors taken from the page: white paper gets dark text; a gray (or dark) box gets white text,
+    the box darkened until the text stands out clearly; a colored box keeps its color, pushed lighter
+    or darker for its text."""
+    f, i = _lum(fill), _lum(ink)
+    if f is None or i is None:
+        return fill, ink
+    (lf, rgb), (li, _) = f, i
+    gray = max(rgb) - min(rgb) < 0.12
+    if lf >= WHITE_PAPER:
+        dark_ink = True
+    elif gray:
+        dark_ink = False
+    else:
+        if (max(lf, li) + 0.05) / (min(lf, li) + 0.05) >= READABLE:
+            return fill, ink
+        dark_ink = lf >= 0.2
+    ink = "#111111" if dark_ink else "#ffffff"
+    li = _lum(ink)[0]
+    new = fill
+    for k in range(0, 11):
+        t = k / 10
+        c = [v + (1 - v) * t for v in rgb] if dark_ink else [v * (1 - t) for v in rgb]
+        new = "#" + "".join(f"{int(round(v * 255)):02x}" for v in c)
+        lf = _lum(new)[0]
+        if (max(lf, li) + 0.05) / (min(lf, li) + 0.05) >= READABLE:
+            return new, ink
+    return new, ink
 
 
 def _place_lines(lines, rect, lh):
@@ -265,7 +323,9 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
         shape = it.get("shape")
         placed = None
         if shape and it.get("bubble"):
-            placed = (fit_shape(text, shape, fmin, fmax, text_pad, metrics)
+            bx = it["bubble"]
+            tall = settings["layout"] == "manga" and (bx[3] - bx[1]) > 1.25 * (bx[2] - bx[0])
+            placed = (fit_shape(text, shape, fmin, fmax, text_pad, metrics, tall=tall)
                       # tight: use the bubble right up to its outline before giving up on the shape
                       or fit_shape(text, shape, fmin, fmin, 0.5, metrics, strict=False))
         if placed:
@@ -284,6 +344,15 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                 colors = bubble_colors(shape, settings) if shape else (settings["overlay_bg"], settings["overlay_fg"])
             rest.append((it, text, colors))
 
+    # Manga / webtoon text that is NOT in a bubble (narration on the art, signs, side remarks): cover only
+    # the original lettering and set the translation compactly around it with an outline, instead of a
+    # big box over the drawing. (Visual novel keeps its boxes.)
+    if settings["layout"] != "vn":
+        free = [r for r in rest if not r[0].get("bubble")]
+        rest = [r for r in rest if r[0].get("bubble")]
+    else:
+        free = []
+
     todo = []
     for it, text, colors in rest:
         x1, y1, x2, y2 = it["box"]
@@ -297,7 +366,8 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
         if pref[2] - pref[0] < min_w:
             cx = (pref[0] + pref[2]) / 2
             pref[0], pref[2] = cx - min_w / 2, cx + min_w / 2
-        todo.append({"text": text, "core": core, "pref": _clip(tuple(pref), W, H), "colors": colors})
+        todo.append({"text": text, "core": core, "pref": _clip(tuple(pref), W, H), "colors": colors,
+                     "covers": _covers(it, W, H)})
 
     # Trim each preferred rect away from every other item's core and from cleaned bubbles
     for i, a in enumerate(todo):
@@ -310,6 +380,10 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
         a["pref"] = r
 
     placed_rects = list(blocked)
+    for it, text, colors in free:
+        b = _free_layout(it, text, colors, W, H, fmin, metrics, scale)
+        if b:
+            out.append(b)
     for a in todo:
         r = a["pref"]
         for p in placed_rects:
@@ -345,8 +419,59 @@ def layout_items(items, region_w, region_h, settings, scale, metrics):
                 min(r[2], max(c[2], cx + tw / 2)), min(r[3], max(c[3], cy + thh / 2)))
         placed_rects.append(rect)
         out.append({"kind": "rect", "rect": rect, "size": size, "lines": _place_lines(lines, rect, lh),
-                    "fill": a["colors"][0], "ink": a["colors"][1]})
+                    "fill": a["colors"][0], "ink": a["colors"][1], "covers": a["covers"]})
+    user = (settings["overlay_bg"], settings["overlay_fg"])
+    for b in out:  # the user's own colors stay as chosen; colors taken from the page are made readable
+        if b.get("fill") and b.get("ink") and (b["fill"], b["ink"]) != user:
+            b["fill"], b["ink"] = readable(b["fill"], b["ink"])
     return resolve_overlaps(out, W, H, gap)
+
+
+def _free_layout(it, text, colors, W, H, fmin, metrics, scale):
+    """Translation of free text: a small patch over the original lettering + the text around it, in the
+    most compact block (least area outside the original text) at the reading size."""
+    x1, y1, x2, y2 = it["box"]
+    m = max(2.0, 2 * scale)
+    patch = _clip((x1 - m, y1 - m, x2 + m, y2 + m), W, H)
+    # huge lettering (a sound effect drawn across the panel): covering it would wipe the drawing, so the
+    # translation is only written over it, with its outline
+    chars = max(1, len("".join(str(it.get("text") or "").split())))
+    letter = math.sqrt((x2 - x1) * (y2 - y1) / chars)  # about how big the original letters are
+    huge = letter > 4.5 * fmin and min(x2 - x1, y2 - y1) > 6 * fmin and (x2 - x1) * (y2 - y1) > 0.02 * W * H
+    pw = patch[2] - patch[0]
+    cx, cy = (patch[0] + patch[2]) / 2, (patch[1] + patch[3]) / 2
+    inner = 2 * scale
+    measure, lh = metrics(fmin)
+    longest = max((measure(w) for w in text.split()), default=0)
+    widths = sorted({max(longest + 2 * inner, min(W, pw * f)) for f in (1, 1.25, 1.5, 2, 2.5, 3, 4, 6)}
+                    | {max(longest + 2 * inner, min(W, 4.5 * fmin))})
+    best = None
+    for w in widths:
+        size, lines, th, _ok = fit(text, w - 2 * inner, 1e9, fmin, fmin, metrics)
+        tw = max(measure(l) for l in lines) + 2 * inner
+        h = th + 2 * inner
+        rx1 = min(max(0, cx - tw / 2), max(0, W - tw))
+        ry1 = min(max(0, cy - h / 2), max(0, H - h))
+        r = (rx1, ry1, rx1 + tw, ry1 + h)
+        ix = max(0, min(r[2], patch[2]) - max(r[0], patch[0]))
+        iy = max(0, min(r[3], patch[3]) - max(r[1], patch[1]))
+        outside = tw * h - ix * iy
+        cost = outside + 0.15 * abs(tw - h) * min(tw, h)  # least drawing covered, not a thin sliver
+        if best is None or cost < best[0]:
+            best = (cost, r, size, lines)
+    _cost, r, size, lines = best
+    _measure, lh = metrics(size)
+    if huge:
+        patch = None
+    return {"kind": "free", "rect": r, "patch": patch, "size": size, "lines": _place_lines(lines, r, lh),
+            "fill": colors[0], "ink": colors[1], "covers": _covers(it, W, H) if patch else []}
+
+
+def _covers(it, W, H):
+    """Areas of the original lettering to paint over (the bubble model's text areas + the read lines):
+    words the OCR missed are hidden too, not left showing beside the translation."""
+    m = 2
+    return [_clip((c[0] - m, c[1] - m, c[2] + m, c[3] + m), W, H) for c in (it.get("cover") or [])]
 
 
 def _poly_box(b):
@@ -372,7 +497,7 @@ def resolve_overlaps(boxes, W, H, gap):
     """
     fixed = [_poly_box(b) for b in boxes if b["kind"] == "poly"]
     placed = list(fixed)
-    for b in sorted((b for b in boxes if b["kind"] == "rect"), key=lambda b: (b["rect"][1], b["rect"][0])):
+    for b in sorted((b for b in boxes if b["kind"] in ("rect", "free")), key=lambda b: (b["rect"][1], b["rect"][0])):
         for _ in range(12):  # a move can create a new overlap further down: repeat a few times
             r = b["rect"]
             hit = next((o for o in placed if _intersects(r, o, gap)), None)

@@ -103,7 +103,8 @@ class Toolbar:
         if width:
             lbl.configure(width=width)
         base = CHIP if chip else BG
-        lbl.bind("<Enter>", lambda e: (lbl.configure(bg=HOVER), self._tip_later(lbl, lbl.tip_text)))
+        lbl.bind("<Enter>", lambda e: (lbl.configure(bg=HOVER), self._tip_later(
+            lbl, lbl.tip_text() if callable(lbl.tip_text) else lbl.tip_text)))
         lbl.bind("<Leave>", lambda e: (lbl.configure(bg=base), self._tip_cancel()))
         def click(_e):
             self._tip_cancel()
@@ -163,14 +164,18 @@ class Toolbar:
         self.actions = tk.Frame(f, bg=BG)        # always visible, also when collapsed
         self.actions.pack(side="left")
         a = self.actions
-        self.btn_translate = self._button(a, self._glyph("translate"), self.app.translate, "Translate now (Alt+T)", icon=True)
+        self.btn_translate = self._button(a, self._glyph("translate"), self.app.translate,
+                                          lambda: f"Translate now ({pretty(self.s['hotkey_translate'])})", icon=True)
         self.btn_translate.pack(side="left")
-        self.btn_pause = self._button(a, self._glyph("pause"), self.app.toggle_pause, "Pause / resume (Alt+Shift+T)", icon=True)
+        self.btn_pause = self._button(a, self._glyph("pause"), self.app.toggle_pause,
+                                      lambda: f"Pause / resume ({pretty(self.s['hotkey_pause'])})", icon=True)
         self.btn_pause.pack(side="left")
-        self.btn_overlay = self._button(a, self._glyph("eye"), self.app.toggle_overlay, "Show / hide overlay (Esc hides)", icon=True)
+        self.btn_overlay = self._button(a, self._glyph("eye"), self.app.toggle_overlay,
+                                        lambda: f"Show / hide overlay ({pretty(self.s['hotkey_hide'])} hides)", icon=True)
         self.btn_overlay.pack(side="left")
         self.btn_region = self._button(a, self._glyph("crop"), self.app.select_region,
-                                       "Draw a frame around the comic page (Alt+Shift+R)", icon=True, keep_focus=True)
+                                       lambda: f"Draw a frame around the comic page ({pretty(self.s['hotkey_region'])})",
+                                       icon=True, keep_focus=True)
         self.btn_region.pack(side="left")
 
         self.tail = tk.Frame(f, bg=BG)           # hidden when collapsed
@@ -193,11 +198,10 @@ class Toolbar:
         act = presets.active(s)
         self.btn_preset.configure(text=(act if len(act) <= 14 else act[:13] + "…") + "  ▾")
         srv = s["server"]
-        mode = s.read_mode()
-        if mode == "local_google":  # this PC reads, Google translates: no AI at all
-            self.btn_server.configure(text="Local + Google  ▾")
-        elif mode == "local_ai":  # this PC reads, the AI only translates
-            self.btn_server.configure(text=f"Local + {SERVER_SHORT.get(srv, srv)}  ▾")
+        reader, tr = s.reader(), s.translator_now()
+        if reader != "ai":  # this PC reads; Google or the AI only translates
+            who = "Google" if tr == "google" else SERVER_SHORT.get(srv, srv)
+            self.btn_server.configure(text=f"Local + {who}  ▾")
         else:
             self.btn_server.configure(text=f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}  ▾")
         region = bool(self.app._region())
@@ -353,6 +357,35 @@ class Toolbar:
     def _popup(self, builder, widget, persistent=False):
         self.menu = PopupMenu(self.root, builder, self._anchor(widget), self.fonts,
                               on_close=self._menu_closed, persistent=persistent)
+        self.menu.opener = widget
+
+    def _reopen_after(self, dialog):
+        """A Settings / server row opened a window (color, font, key, API keys…): when that window closes,
+        open the same menu again at the same submenu, so the user can keep adjusting."""
+        last = getattr(self, "_last_menu", None)
+        win = getattr(dialog, "win", None)
+        if not last or win is None:
+            return
+        opener, path = last
+
+        def check():
+            try:
+                alive = bool(win.winfo_exists())
+            except tk.TclError:
+                alive = False
+            if alive:
+                self.root.after(200, check)
+                return
+            if self.menu is not None:
+                return  # the user already opened a menu
+            {self.btn_settings: self.open_settings_menu, self.btn_server: self.open_server_menu}[opener]()
+            m = self.menu
+            for name in path:  # open the same submenus again
+                if m is None:
+                    break
+                m.open_sub_by_name(name)
+                m = m.child
+        self.root.after(200, check)
 
     # ------------------------------------------------------------ OCR device (CPU / graphics card)
     def _device_label(self):
@@ -439,21 +472,33 @@ class Toolbar:
                      ("item", "Switch server when out of quota", bool(s["auto_switch_server"]),
                       lambda: a.toggle_setting("auto_switch_server"), None),
                      ("sep",),
-                     ("item", "API keys", False, self.open_api_dialog, None, "close")]
+                     ("item", "API keys", False, lambda: self._reopen_after(self.open_api_dialog()), None, "close")]
             return rows
 
         def top():
-            mode, srv = s.read_mode(), s["server"]
+            srv = s["server"]
+            reader, tr = s.reader(), s.translator_now()
             label = f"{SERVER_SHORT.get(srv, srv)} · {short_model(s[f'{srv}_model']) or '—'}"
-            rows = [("item", "AI reads and translates", mode == "ai", lambda: a.set_read_mode("ai"), None),
-                    ("item", "Local OCR + AI translation", mode == "local_ai", lambda: a.set_read_mode("local_ai"), None),
-                    ("item", "Local OCR + Google Translate", mode == "local_google",
-                     lambda: a.set_read_mode("local_google"), "no key"),
-                    ("sep",),
-                    ("sub", "AI (backup)" if mode == "local_google" else "AI", label, ai)]
-            if mode != "ai":
-                rows += [("sub", "OCR device", self._device_label(), self._device_rows),
-                         ("item", "OCR models", False, self.open_local_dialog, None, "close")]
+            local_ok = getattr(a, "local_ok", True)
+            # left column: who reads the text
+            rows = [("header", "Read (OCR)"),
+                    ("item", "AI", reader == "ai", lambda: a.set_reader("ai"), "reads + translates"),
+                    ("item", "Local", reader == "local", lambda: a.set_reader("local"),
+                     "this PC" if local_ok else "🔒 needs 64-bit")]
+            lower = []
+            if reader == "local":
+                lower += [("sub", "OCR device", self._device_label(), self._device_rows),
+                          ("item", "OCR models", False, lambda: self._reopen_after(self.open_local_dialog()),
+                           None, "close")]
+            if lower:
+                rows += [("sep",)] + lower
+            # right column: who translates
+            rows += [("col",), ("header", "Translate"),
+                     ("item", "AI", tr == "ai", lambda: a.set_translator("ai"), SERVER_SHORT.get(srv, srv)),
+                     ("item", "Google Translate", tr == "google", lambda: a.set_translator("google"),
+                      "no key" if reader != "ai" else "with Local"),
+                     ("sep",),
+                     ("sub", "AI (backup)" if tr == "google" else "AI", label, ai)]
             return rows
         self._popup(top, self.btn_server, persistent=True)
 
@@ -478,12 +523,15 @@ class Toolbar:
         def scanning():
             if s["layout"] == "vn":
                 r = s["vn_region"]
-                return [("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
+                rows = [("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
                          pretty(s["hotkey_vn_auto"])),
+                        ("item", "Ignore moving background", bool(s["vn_ignore_motion"]),
+                         lambda: a.toggle_setting("vn_ignore_motion"), "watch only the text"),
                         ("sep",),
                         ("item", "Text box frame", False, a.select_region,
                          f"{r[2]}×{r[3]}" if r else "not drawn", "close")]
-            return [("item", "Auto · after scrolling stops", s["mode"] == "auto", lambda: a.set_mode("auto"), None),
+                return rows
+            return [("item", "Auto", s["mode"] == "auto", lambda: a.set_mode("auto"), None),
                     ("item", "Hotkey only", s["mode"] == "hotkey", lambda: a.set_mode("hotkey"),
                      pretty(s["hotkey_translate"])),
                     ("sep",),
@@ -506,20 +554,26 @@ class Toolbar:
         def look():
             fam = s["font_family"]
             vn = s["layout"] == "vn"
+            k = a.look_keys()
+            tbox = k["fg"] == "tb_fg"  # editing the Visual novel Text box's own look
             rows = [("header", "Text"),
-                    ("item", "Font", False, self.open_font_picker, fam if len(fam) <= 16 else fam[:15] + "…", "close"),
+                    ("item", "Font", False, lambda: self._reopen_after(self.open_font_picker()),
+                     fam if len(fam) <= 16 else fam[:15] + "…", "close"),
                     ("entry", "Minimum size", s["font_min"], a.set_font_size, "px"),
                     ("item", "Auto text size", bool(s["auto_text_size"]), a.toggle_auto_text_size, "up to 1.6×"),
                     ("item", "Text color", False,
-                     lambda: a.pick_overlay_color("overlay_fg", "Translated text color"), s["overlay_fg"], "close"),
+                     lambda: self._reopen_after(a.pick_overlay_color(k["fg"], "Translated text color")),
+                     s[k["fg"]], "close"),
                     ("sep",),
-                    ("header", "Box"),
+                    ("header", "Text box style" if tbox else "Box"),
                     ("item", "Box color", False,
-                     lambda: a.pick_overlay_color("overlay_bg", "Translated box background"), s["overlay_bg"], "close"),
-                    ("item", "Box color from the page", bool(s["vn_game_colors"]), a.toggle_vn_colors, None)]
+                     lambda: self._reopen_after(a.pick_overlay_color(k["bg"], "Translated box background")),
+                     s[k["bg"]], "close")]
+            if not tbox:
+                rows += [("item", "Box color from the page", bool(s["vn_game_colors"]), a.toggle_vn_colors, None)]
             if vn:  # see-through boxes are for visual novels only
-                rows += [("entry", "Box opacity", s["overlay_opacity"], a.set_overlay_opacity, "%"),
-                         ("entry", "Box blur", s["overlay_blur"], a.set_overlay_blur, "px")]
+                rows += [("entry", "Box opacity", s[k["opacity"]], a.set_overlay_opacity, "%"),
+                         ("entry", "Box blur", s[k["blur"]], a.set_overlay_blur, "px")]
             rows += [("sep",),
                      ("header", "Display"),
                      ("item", "Text box", bool(s["text_box"]) and vn, a.toggle_text_box,
@@ -553,7 +607,8 @@ class Toolbar:
         def more():
             def key(label, name):
                 return ("item", label, False,
-                        lambda: a.open_key_dialog(name, label.rstrip("…"), self._anchor(self.btn_settings)),
+                        lambda: self._reopen_after(
+                            a.open_key_dialog(name, label.rstrip("…"), self._anchor(self.btn_settings))),
                         pretty(s[name]), "close")
             rows = [("header", "Keys"), key("Translate key", "hotkey_translate")]
             if s["layout"] == "vn":
@@ -565,7 +620,8 @@ class Toolbar:
                      ("item", "Show in taskbar", bool(s["taskbar_icon"]), a.toggle_taskbar_icon, None),
                      ("item", "Developer mode", bool(s["developer_mode"]), a.toggle_developer_mode, "visible to OBS"),
                      ("sep",),
-                     ("item", "API keys & models", False, self.open_api_dialog, None, "close")]
+                     ("item", "API keys & models", False, lambda: self._reopen_after(self.open_api_dialog()),
+                      None, "close")]
             return rows
 
         def top():
@@ -587,22 +643,26 @@ class Toolbar:
         self._popup(top, self.btn_settings, persistent=True)
 
     def _menu_closed(self):
+        m = self.menu
+        if m is not None and getattr(m, "opener", None) in (self.btn_settings, self.btn_server):
+            self._last_menu = (m.opener, list(getattr(m, "last_path", [])))
         self.menu = None
         self.app.restore_focus()
 
     def open_local_dialog(self):
         from .local_dialog import LocalDialog
-        LocalDialog(self.root, self.s, on_changed=self.app.on_local_changed)
+        return LocalDialog(self.root, self.s, on_changed=self.app.on_local_changed)
 
     def open_api_dialog(self, tab=None):
-        ApiDialog(self.root, self.s, on_saved=self.app.on_api_saved, tab=tab)
+        return ApiDialog(self.root, self.s, on_saved=self.app.on_api_saved, tab=tab)
 
     # ------------------------------------------------------------ font picker
     def open_font_picker(self):
         if self.picker and self.picker.win.winfo_exists():
             self.picker.win.lift()
-            return
+            return self.picker
         self.picker = FontPicker(self.root, self.s, self.app.apply_font, anchor=self._anchor(self.btn_settings))
+        return self.picker
 
 
 class FontPicker:
@@ -618,6 +678,7 @@ class FontPicker:
 
         w = self.win = tk.Toplevel(root)
         w.title("LazyK · Overlay font")
+        theme.style_dialog(w)
         w.configure(bg=BG, padx=12, pady=12)
         w.attributes("-topmost", True)
         w.resizable(False, True)

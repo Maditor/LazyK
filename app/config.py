@@ -41,8 +41,9 @@ DEFAULTS = {
     "auto_switch_server": True,     # server out of quota / bad key -> the other server
     # Reading the page (OCR)
     "ocr_engine": "local",          # ai (the server above reads the image) | local (this PC reads it)
-    "local_gpu": False,             # local OCR on a graphics card (DirectML); false = CPU (default: small models are faster on the CPU)
+    "local_gpu": True,              # local OCR + bubble model on a graphics card (DirectML); false = CPU
     "local_gpu_id": 0,              # which card: DirectML device number (0 = the Windows default card)
+    "local_gpu_auto": True,         # pick the card by itself (the one with the most video memory: the dedicated one)
     "local_manga_ocr": True,        # Japanese: re-read blocks with manga-ocr when it is downloaded
     "translator": "google",         # with local OCR: ai (Gemini / Cloudflare) | google (Google Translate, no key)
     # Languages / content
@@ -56,13 +57,15 @@ DEFAULTS = {
     "auto_apps": ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
                   "vivaldi.exe", "browser.exe"],  # browser.exe = Coc Coc / Yandex
     # Hotkeys
-    "hotkey_mode": "alt+shift+a",   # switch Auto <-> Hotkey
+    "hotkey_mode": "ctrl+alt+m",    # switch Auto <-> Hotkey
     "hotkey_translate": "alt+t",
     "hotkey_hide": "esc",
-    "hotkey_pause": "alt+shift+t",
-    "hotkey_region": "alt+shift+r",  # draw a capture frame
-    "hotkey_vn_auto": "alt+shift+v",  # visual novel: auto-scan on / off
-    "hotkey_toolbar": "alt+shift+h",  # hide / show the toolbar (every function keeps working)
+    "hotkey_pause": "ctrl+alt+p",
+    "hotkey_region": "ctrl+alt+r",  # draw a capture frame
+    "hotkey_vn_auto": "ctrl+alt+v",  # visual novel: auto-scan on / off
+    "hotkey_toolbar": "ctrl+alt+h",  # hide / show the toolbar (every function keeps working)
+    # Ctrl+Alt: Alt+Shift+<key> clashed with Ren'Py games (Alt+Shift+V = self-voicing) and Alt+Shift alone
+    # switches the Windows keyboard layout
     "taskbar_icon": True,           # a taskbar button: right-click → Close window quits, click shows the toolbar
     "hotkey_quit": "ctrl+alt+q",    # until the tray icon exists (step 2)
     "hide_on_scroll": True,
@@ -73,6 +76,8 @@ DEFAULTS = {
     "vn_poll_ms": 100,              # how often the text box is looked at while auto-scan is on
     "vn_stable_ms": 200,            # text must stay unchanged this long (typewriter effect) before a scan
                                     # (AI reading the image: at least 350, a scan started too early costs quota)
+    "bubble_model": True,           # manga / webtoon: always use the bubble model when it is there (bubble_model.py)
+    "vn_ignore_motion": False,      # auto-scan watches only the text, not a moving scene behind a see-through box
     "vn_change_pct": 0.3,           # % of the box that must change to count as new text (raise it if a big icon blinks)
     "vn_max_width": 1000,           # image width sent to the AI
     "vn_game_colors": True,         # auto-detect the background color (all layouts: manga, webtoon, visual novel) and paint the translation in it
@@ -91,6 +96,11 @@ DEFAULTS = {
     "overlay_outline": "",          # e.g. "#cccccc"; empty = none
     "overlay_opacity": 100,         # % of the box background that is solid; lower = the screen shows through
     "overlay_blur": 0,              # px: blur of the screen seen through a see-through box (frosted glass)
+    # Visual novel Text box: its own look, separate from the boxes painted over the page
+    "tb_fg": "#ffffff",
+    "tb_bg": "#000000",
+    "tb_opacity": 100,
+    "tb_blur": 0,
     "overlay_shadow": False,
     "text_box": False,              # translations in a separate, movable box instead of over the page
     "text_box_rect": None,          # [x, y, w, h] of that box (screen px); None = bottom center
@@ -177,8 +187,16 @@ class Settings:
             return "ai"
         return "local_google" if self["translator"] == "google" else "local_ai"
 
+    def reader(self) -> str:
+        """Who reads the text: ai (the AI reads the image) | local (this PC's OCR)."""
+        return "local" if self["ocr_engine"] == "local" else "ai"
+
+    def translator_now(self) -> str:
+        """ai | google. When the AI reads the image it also translates in the same step."""
+        return "ai" if self.reader() == "ai" else ("google" if self["translator"] == "google" else "ai")
+
     def needs_ai(self) -> bool:
-        return self.read_mode() != "local_google"
+        return self.translator_now() == "ai"
 
     def has_credentials(self) -> bool:
         cf = bool(str(self["cf_account_id"]).strip() and str(self["cf_api_token"]).strip())
@@ -191,6 +209,12 @@ class Settings:
             # turn the graphics card on again from the OCR device menu
             self.data["local_gpu"] = False
             self.data["_gpu_cpu_default"] = 1
+        if saved.get("_gpu_default") != 2:
+            # with the bubble model a graphics card is clearly faster (about 1 s -> 0.1 s a page): the
+            # dedicated card becomes the default, once; the user can still pick the CPU in OCR device
+            self.data["local_gpu"] = True
+            self.data["local_gpu_auto"] = True
+            self.data["_gpu_default"] = 2
         if saved.get("_vn_timing") != 2:
             # faster visual novel defaults (look 10x a second, scan after 0.2 s of still text): only replace
             # the old defaults, never a value the user chose
@@ -203,6 +227,18 @@ class Settings:
             # older versions shrank text below the chosen size; now font_min is the reading size
             self.data["font_min"] = max(int(self.data.get("font_min", 14)), 13)
             self.data["_font_scheme"] = 2
+        if saved.get("_hotkeys_v2") != 1:
+            # the old Alt+Shift defaults clashed with Ren'Py visual novels: move only keys still on the old default
+            old = {"hotkey_mode": "alt+shift+a", "hotkey_pause": "alt+shift+t", "hotkey_region": "alt+shift+r",
+                   "hotkey_vn_auto": "alt+shift+v", "hotkey_toolbar": "alt+shift+h"}
+            for k, v in old.items():
+                if str(self.data.get(k, "")).replace(" ", "").lower() == v:
+                    self.data[k] = DEFAULTS[k]
+            self.data["_hotkeys_v2"] = 1
+        for k in ("vn_source", "luna_port", "hook_engine", "textractor_cli", "textractor_cli32",
+                  "textractor_cli64", "hook_last_game", "hook_games"):
+            self.data.pop(k, None)  # the game-text hook was removed
+        self.data["bubble_model"] = True  # no longer a choice: the model is used whenever it is there
         if self.data.get("layout") not in ("manga", "webtoon", "vn"):
             self.data["layout"] = "manga"
         if self.data.get("ocr_engine") not in ("ai", "local"):

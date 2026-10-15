@@ -417,8 +417,22 @@ def merge_fragments(items, layout):
     for a in range(n):
         for b in range(a + 1, n):
             A, B = items[a], items[b]
+            ga, gb = A.get("mgroup"), B.get("mgroup")
+            if ga is not None or gb is not None:  # placed by the bubble model: its groups decide
+                if ga == gb:
+                    parent[find(a)] = find(b)
+                continue
             same_bubble = A.get("bubble") and B.get("bubble") and _iou(A["bubble"], B["bubble"]) > 0.6
-            if same_bubble or _overlap_ratio(A["box"], B["box"]) > 0.5:
+            if same_bubble:
+                parent[find(a)] = find(b)
+                continue
+            if A.get("shape") or B.get("shape"):
+                continue  # a bubble found on the page holds exactly its own text: never glue other text to it
+            if _overlap_ratio(A["box"], B["box"]) > 0.5:
+                aa = (A["box"][2] - A["box"][0]) * (A["box"][3] - A["box"][1])
+                bb = (B["box"][2] - B["box"][0]) * (B["box"][3] - B["box"][1])
+                if max(aa, bb) > 12 * max(1, min(aa, bb)):
+                    continue  # a small line under a huge SFX box: two different things
                 parent[find(a)] = find(b)
     groups = {}
     for i in range(n):
@@ -445,6 +459,8 @@ def merge_fragments(items, layout):
         merged["bubble"] = max(bubbles, key=lambda b: (b[2] - b[0]) * (b[3] - b[1])) if bubbles else None
         shapes = [it for it in g if it.get("shape") and it.get("bubble") == merged["bubble"]]
         merged["shape"] = shapes[0]["shape"] if shapes else None
+        covers = [c for it in g for c in (it.get("cover") or [])]
+        merged["cover"] = covers or None
         log.info("Merged %d fragments into one bubble: %s", len(g), merged["text"][:40])
         out.append(merged)
     return out
@@ -525,14 +541,93 @@ def run_ocr(client, img: Image.Image, settings, cancel, debug=None, on_status=No
         all_items.append(it)
     if dropped:
         log.info("Dropped %d half-bubbles at tile seams", dropped)
-    return _finish(all_items, gray, inv, settings)
+    return _finish(all_items, gray, inv, settings, img=img)
 
 
-def _finish(all_items, gray, inv, settings):
+def _model_bubbles(items, img, gray, settings):
+    """AI-read items + the bubble model: each item takes the shape of the model's bubble around it, or is
+    marked as free text (lettering on the art) with the model's tight box. False when not installed."""
+    from . import bubble_model, bubbles
+    try:
+        dets = bubble_model.detect(img, bool(settings["local_gpu"]))
+        if dets is None:
+            return False
+        found, owner, _empty = bubbles.from_model(gray, [it["box"] for it in items], dets,
+                                                  np.asarray(img.convert("RGB")),
+                                                  ellipse=settings["layout"] == "webtoon")
+        free_dets = [d["box"] for d in dets if d["label"] == "text_free"]
+        for it, o in zip(items, owner):
+            if o < 0:  # the AI's box may sit a little off: the free-text area it overlaps most
+                ib = it["box"]
+                area = max(1.0, (ib[2] - ib[0]) * (ib[3] - ib[1]))
+                best = max(((_inter(ib, d) / area, d) for d in free_dets), key=lambda z: z[0], default=(0, None))
+                if best[0] >= 0.4:
+                    it.update(bubble=None, shape=None, free_area=True, mgroup=("f",) + tuple(best[1]))
+                    it["box"] = [int(v) for v in best[1]]
+                continue
+            b = found[o]
+            it["mgroup"] = o
+            it["cover"] = [list(it["box"])] + [list(c) for c in b.get("cover", [])]
+            if b.get("free"):
+                it.update(bubble=None, shape=None, free_area=True)
+                fb = b["bbox"]
+                if _inter(it["box"], fb) > 0.4 * max(1, (it["box"][2] - it["box"][0]) * (it["box"][3] - it["box"][1])):
+                    it["box"] = [max(it["box"][0], fb[0]), max(it["box"][1], fb[1]),
+                                 min(it["box"][2], fb[2]), min(it["box"][3], fb[3])]
+                continue
+            it["bubble"] = list(b["bbox"])
+            it["shape"] = {"poly": b["poly"], "y0": b["y0"], "rows": b["rows"], "fill": b["fill"],
+                           "color": b.get("color")}
+            if b.get("invert"):
+                it["shape"]["invert"] = True
+        return True
+    except Exception:
+        log.exception("Bubble model failed")
+        return False
+
+
+def _inter(a, b):
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def _page_bubbles(items, gray, inv):
+    from . import bubbles
+    if not items:
+        return
+    try:
+        for invert in (False, True):
+            left = [it for it in items if not it.get("shape")]
+            if not left:
+                return
+            found, owner = bubbles.find(gray, [it["box"] for it in left], invert=invert)
+            for it, o in zip(left, owner):
+                if o < 0:
+                    continue
+                b = found[o]
+                it["bubble"] = list(b["bbox"])
+                it["shape"] = {"poly": b["poly"], "y0": b["y0"], "rows": b["rows"], "fill": b["fill"]}
+                if invert:
+                    it["shape"]["invert"] = True
+    except Exception:
+        log.exception("Bubble detection failed")
+
+
+def _finish(all_items, gray, inv, settings, img=None):
     """Snap boxes to bubbles, filter, join fragments, reading order (shared by AI and local OCR)."""
     from . import refine
+    # The bubble model first (AI-read pages): it knows joined bubbles and free text apart, which the
+    # per-box snap below does not
+    use_model = (img is not None and settings["bubble_model"] and settings["layout"] != "vn"
+                 and settings["ocr_engine"] != "local")
+    if use_model:
+        use_model = _model_bubbles([it for it in all_items if it.get("box")], img, gray, settings)
     for it in all_items:
         box = it["box"]
+        if it.get("shape") and it.get("bubble"):
+            continue  # its bubble was found on the page already (local OCR): keep that exact shape
+        if it.get("free_area"):
+            it["bubble"] = None  # the model says: text on the art, no bubble to snap to
+            continue
         it["bubble"] = None
         # 3. Snap to the real text strokes / bubble outline
         if box:
@@ -541,6 +636,12 @@ def _finish(all_items, gray, inv, settings):
                 it["model_box"] = box
                 it["box"], it["bubble"] = list(snapped[0]), (list(snapped[1]) if snapped[1] else None)
                 it["shape"] = snapped[2]
+
+    # Bubbles the per-box snap could not close (dashed / cloud / spiky outlines, a box bigger than its
+    # bubble): look for them on the page with the text boxes as a guide
+    if settings["layout"] != "vn" and settings["ocr_engine"] != "local":  # local OCR did this per line already
+        todo = [it for it in all_items if it.get("box") and not it.get("free_area")]
+        _page_bubbles([it for it in todo if not it.get("shape")], gray, inv)
 
     if settings["skip_sfx"]:
         all_items = [it for it in all_items if it["type"] != "sfx"]
@@ -570,5 +671,19 @@ def run_local_ocr(img: Image.Image, settings, cancel, on_status=None):
     for it in items:
         x1, y1, x2, y2 = it["box"]
         it["box"] = [x1 + ox, y1 + oy, x2 + ox, y2 + oy]
-    log.info("Local OCR: %d blocks", len(items))
+        if "model_group" in it:
+            it["mgroup"] = it.pop("model_group")
+            it["free_area"] = bool(it.pop("model_free", False))
+        if it.get("cover"):
+            it["cover"] = [[c[0] + ox, c[1] + oy, c[2] + ox, c[3] + oy] for c in it["cover"]]
+        b = it.pop("pre_bubble", None)
+        if b is not None:  # the bubble found on the page: its shape, in capture pixels
+            bx = b["bbox"]
+            it["bubble"] = [bx[0] + ox, bx[1] + oy, bx[2] + ox, bx[3] + oy]
+            it["shape"] = {"poly": [v + (ox if k % 2 == 0 else oy) for k, v in enumerate(b["poly"])],
+                           "y0": b["y0"] + oy, "rows": [[l + ox, r + ox] if l >= 0 else [l, r] for l, r in b["rows"]],
+                           "fill": b["fill"], "color": b.get("color")}
+            if b.get("invert"):
+                it["shape"]["invert"] = True
+    log.info("Local OCR: %d blocks, %d in a found bubble", len(items), sum(1 for it in items if it.get("shape")))
     return _finish(items, gray, inv, settings)

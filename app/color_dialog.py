@@ -52,6 +52,7 @@ class ColorDialog:
 
         w = self.win = tk.Toplevel(root)
         w.title(f"LazyK · {title}")
+        T.style_dialog(w)
         w.configure(bg=T.BG, padx=18, pady=16)
         w.attributes("-topmost", True)
         w.resizable(False, False)

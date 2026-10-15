@@ -19,16 +19,10 @@ class LocalDialog:
         self.f = T.fonts(root)
         w = self.win = tk.Toplevel(root)
         w.title("LazyK · Local OCR")
+        T.style_dialog(w)
         w.configure(bg=T.BG)
         w.resizable(False, False)
         w.attributes("-topmost", True)
-        try:
-            from .config import icon_path
-            from . import winapi
-            self._icon = tk.PhotoImage(file=icon_path(on_dark=not winapi.system_light_theme()))
-            w.iconphoto(False, self._icon)
-        except Exception:
-            pass
         self.cancel = threading.Event()
         self.busy = None  # pack being downloaded
         self.rows = {}

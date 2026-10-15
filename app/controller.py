@@ -75,6 +75,7 @@ class App:
              "vn_auto": settings["hotkey_vn_auto"], "toolbar": settings["hotkey_toolbar"]},
             on_hotkey=lambda name: self.q.put(("hotkey", name)),
             on_scroll=lambda x, y: self.q.put(("scroll", x, y)),
+            on_click=lambda x, y, down: self.q.put(("click", x, y, down)),
         )
 
     # ------------------------------------------------------------ lifecycle
@@ -87,6 +88,13 @@ class App:
         self.page_watcher = PageWatcher(self)  # sees scrolling the wheel hook misses (touchpad, scrollbar)
         if self.s["scroll_watch"]:
             self.root.after(2500, self.page_watcher.start)
+        from . import local_ocr
+        self.local_ok = local_ocr.available()  # False on 32-bit Windows (no onnxruntime wheels)
+        if not self.local_ok and self.s["ocr_engine"] == "local":
+            self.s.update(ocr_engine="ai")  # local reading can't run here: fall back to the AI server
+            log.info("Local OCR not available (32-bit?) — switched to AI mode")
+            self.root.after(1500, lambda: self._status(
+                "info", "Local OCR needs 64-bit Windows — using AI mode (add a key)", auto_hide=9000))
         self.root.after(30, self._poll)
         self.toolbar.show()
         if self.overlay.text_box_mode():
@@ -111,14 +119,16 @@ class App:
         steps = []
         if s["ocr_engine"] == "local":
             steps.append((1200, lambda: local_ocr.ENGINE.warm(s)))
-        if s.read_mode() == "local_google":
+        if s.translator_now() == "google":
             steps.append((3500, gtranslate.warm))
         if s["tts_enabled"]:
             steps.append((5000, self.tts.warm))
             if str(s["tts_engine"]).lower() == "local":
                 steps.append((6000, self.setup_local_voice))  # nothing to do when it is already there
         # the graphics card list is only for the OCR device menu: read it late (or when that menu opens)
-        steps.append((15000, lambda: gpus.load(on_done=lambda: self.q.put(("gpus",)))))
+        # (or right away when LazyK picks the card itself: the dedicated one should do the first page)
+        gpu_auto = s["local_gpu"] and s["local_gpu_auto"]
+        steps.append((100 if gpu_auto else 15000, lambda: gpus.load(on_done=lambda: self.q.put(("gpus",)))))
         for ms, fn in steps:
             self.root.after(ms, fn)
 
@@ -234,6 +244,8 @@ class App:
                 self.translate(auto=True)
         elif kind == "scroll":
             self._on_scroll(ev[1], ev[2])
+        elif kind == "click":
+            self._on_click(ev[1], ev[2], ev[3])
         elif kind == "pagemove":
             self._on_page_move(ev[1])
         elif kind == "status":
@@ -247,6 +259,7 @@ class App:
             _, state, text, ms = ev
             self._status(state, text, auto_hide=ms)
         elif kind == "gpus":
+            self._auto_gpu()
             self.toolbar.refresh_menu()  # the OCR device list just arrived
         elif kind == "toast":
             _, state, text, ms = ev
@@ -269,9 +282,9 @@ class App:
                 hint = local_ocr.ENGINE.hint if self.s["ocr_engine"] == "local" else ""
                 self._status("error" if hint else "info", hint or "No text found", auto_hide=6000 if hint else 2500)
                 return
+            self.overlay.show_items(rect, items, dpi)  # the text first: it is what the reader waits for
             if self.s["tts_enabled"] and not cached:  # a page coming back from the cache is not read again
-                self.tts.speak(items)  # before drawing: the voice request goes out a little sooner
-            self.overlay.show_items(rect, items, dpi)
+                self.root.after_idle(lambda it=items: self.tts.speak(it))
             t0 = getattr(self, "_vn_t0", None)
             if self.s["layout"] == "vn" and t0:
                 import time as _t
@@ -393,6 +406,9 @@ class App:
 
     def set_read_mode(self, mode):
         """ai | local_ai | local_google (see Settings.read_mode)."""
+        if mode != "ai" and not getattr(self, "local_ok", True):
+            self._status("error", "Local OCR needs 64-bit Windows (this is a 32-bit install)", auto_hide=7000)
+            return
         if mode == "ai":
             self.s.update(ocr_engine="ai")
         else:
@@ -405,9 +421,65 @@ class App:
         if self.s.needs_ai() and not self.s.has_credentials():
             self._ask_credentials()
 
+    READER_NAMES = {"ai": "AI reads the screen", "local": "Local OCR"}
+
+    def set_reader(self, reader):
+        """Left column of the server menu: ai | local."""
+        if reader == self.s.reader():
+            return
+        if reader == "local" and not getattr(self, "local_ok", True):
+            self._status("error", "Local OCR needs 64-bit Windows (this is a 32-bit install)", auto_hide=7000)
+            return
+        self.s.update(ocr_engine=reader)
+        if reader == "local":
+            from . import local_ocr
+            local_ocr.ENGINE.warm(self.s)
+        self.pipeline.clear_cache()
+        self.toolbar.refresh()
+        self._status("info", self.READER_NAMES[reader], auto_hide=1800)
+        if self.s.needs_ai() and not self.s.has_credentials():
+            self._ask_credentials()
+
+    def set_translator(self, tr):
+        """Right column of the server menu: ai | google."""
+        if tr == "google" and self.s.reader() == "ai":
+            # the AI reads and translates in one step; Google needs the text first
+            if getattr(self, "local_ok", True):
+                self.s.update(translator="google")
+                self.set_reader("local")
+            else:
+                self._status("error", "Google Translate needs Local OCR (64-bit Windows)",
+                             auto_hide=6000)
+            return
+        self.s.update(translator=tr)
+        self.pipeline.clear_cache()
+        self.toolbar.refresh()
+        if tr == "google":
+            from . import gtranslate
+            gtranslate.prewarm()
+        self._status("info", "Translate with " + ("Google" if tr == "google" else "AI"), auto_hide=1800)
+        if self.s.needs_ai() and not self.s.has_credentials():
+            self._ask_credentials()
+
+    def _auto_gpu(self):
+        """Graphics card on 'automatic': the card with the most video memory (a laptop's dedicated
+        NVIDIA / AMD card rather than the graphics built into the processor)."""
+        from . import gpus, local_ocr
+        cards = gpus.cached() or []
+        if not (self.s["local_gpu"] and self.s["local_gpu_auto"]) or not cards:
+            return
+        best = max(cards, key=lambda g: (g.get("mb", 0), -g["id"]))
+        if int(self.s["local_gpu_id"] or 0) != best["id"] or local_ocr.GPU_ID != best["id"]:
+            self.s.update(local_gpu_id=best["id"])
+            local_ocr.GPU_ID = best["id"]
+            log.info("OCR device: %s (picked automatically)", best["name"])
+            if self.s["ocr_engine"] == "local" and not self.busy:
+                local_ocr.ENGINE.warm(self.s)
+
     def set_ocr_device(self, gpu_id):
         """None = CPU, else the DirectML card number. Models reload on their next use."""
         from . import gpus, local_ocr
+        self.s.update(local_gpu_auto=False)  # the user chose: keep it
         if gpu_id is None:
             self.s.update(local_gpu=False)
             label = "CPU"
@@ -497,7 +569,7 @@ class App:
             self.tts.warm()
         else:
             self.tts.stop()
-        if new.read_mode() == "local_google":
+        if new.translator_now() == "google":
             from . import gtranslate
             gtranslate.prewarm()
         if old["text_box_rect"] != new["text_box_rect"] and self.overlay.textbox is not None:
@@ -709,7 +781,7 @@ class App:
 
     def _mode_text(self):
         if self.s["mode"] == "auto":
-            return "Auto: translates when you stop scrolling"
+            return "Auto"
         return f"Hotkey: {pretty(self.s['hotkey_translate'])} to translate"
 
     # ------------------------------------------------------------ translate key
@@ -727,9 +799,10 @@ class App:
         from .key_dialog import KeyDialog
         if getattr(self, "_key_win", None) and self._key_win.win.winfo_exists():
             self._key_win.win.lift()
-            return
+            return self._key_win
         self._key_win = KeyDialog(self.root, self.watcher, self.s[setting], DEFAULTS[setting],
                                   lambda spec: self.set_hotkey(setting, spec, title), anchor, title)
+        return self._key_win
 
     def set_hotkey(self, setting, spec, title="Key"):
         spec = str(spec).lower()
@@ -755,7 +828,7 @@ class App:
 
     # ------------------------------------------------------------ overlay colors
     def pick_overlay_color(self, key, title):
-        """key: overlay_bg | overlay_fg. LazyK's color picker (with an eyedropper); applied live."""
+        """key: overlay_bg | overlay_fg | tb_bg | tb_fg. LazyK's color picker (with an eyedropper); applied live."""
         from .color_dialog import ColorDialog
         old = self.s[key]
 
@@ -776,39 +849,47 @@ class App:
             self.toolbar.refresh()
             self.restore_focus()
 
-        ColorDialog(self.root, old, title, on_change=preview, on_done=done)
+        return ColorDialog(self.root, old, title, on_change=preview, on_done=done)
+
+    def look_keys(self):
+        """Settings keys the Look menu edits: the Visual novel Text box has its own colors / opacity / blur
+        (black box, white text at first), separate from the boxes painted over the page."""
+        if self.s["layout"] == "vn" and self.s["text_box"]:
+            return {"fg": "tb_fg", "bg": "tb_bg", "opacity": "tb_opacity", "blur": "tb_blur"}
+        return {"fg": "overlay_fg", "bg": "overlay_bg", "opacity": "overlay_opacity", "blur": "overlay_blur"}
 
     def set_overlay_opacity(self, text):
-        """Typed in Settings → Text → Background opacity (0-100 %)."""
+        """Typed in Settings → Look → Box opacity (0-100 %)."""
         try:
             v = int(float(str(text).strip().rstrip("%")))
         except ValueError:
             return
-        self.s.update(overlay_opacity=max(0, min(100, v)))
+        self.s.update(**{self.look_keys()["opacity"]: max(0, min(100, v))})
         self.rerender()
         self.toolbar.refresh()
 
     def set_overlay_blur(self, text):
-        """Typed in Settings → Text → Background blur (0-40 px)."""
+        """Typed in Settings → Look → Box blur (0-40 px)."""
         try:
             v = int(float(str(text).strip()))
         except ValueError:
             return
+        k = self.look_keys()
         v = max(0, min(40, v))
-        upd = {"overlay_blur": v}
-        if v > 0 and int(self.s["overlay_opacity"]) >= 100:
+        upd = {k["blur"]: v}
+        if v > 0 and int(self.s[k["opacity"]]) >= 100:
             # blur is the screen seen through the box: a fully solid box has nothing to blur, so the setting
             # used to do nothing. Make the box see-through (the colors stay the auto-picked ones).
-            upd["overlay_opacity"] = 75
+            upd[k["opacity"]] = 75
             self._status("info", "Blur shows through a see-through box: opacity set to 75%", auto_hide=4000)
         self.s.update(**upd)
         self.rerender()
         self.toolbar.refresh()
 
     def reset_overlay_colors(self):
+        """Reset look: only the style being edited (Text box, or the boxes over the page)."""
         from .config import DEFAULTS
-        self.s.update(overlay_bg=DEFAULTS["overlay_bg"], overlay_fg=DEFAULTS["overlay_fg"],
-                      overlay_opacity=DEFAULTS["overlay_opacity"], overlay_blur=DEFAULTS["overlay_blur"])
+        self.s.update(**{key: DEFAULTS[key] for key in self.look_keys().values()})
         self.rerender()
         self.toolbar.refresh()
 
@@ -1009,8 +1090,57 @@ class App:
         if auto:
             self._auto_hwnd = hwnd
             self._cancel_auto_timer()
-            delay = max(150, int(self.s["scroll_delay_ms"]))
+            delay = self._quiet_ms()
             self._auto_job = self.root.after(delay, self._auto_fire)
+
+    def _on_click(self, x, y, down):
+        """Auto mode: a click on the page may turn it (click-to-advance readers). The page watcher takes
+        a look at the page when the button goes down and translates once the page has changed and
+        settled; a click that changes nothing (selecting text, a menu) does nothing."""
+        if not getattr(self, "_click_seen", False):
+            self._click_seen = True
+            log.info("Mouse clicks are arriving")
+        if self.paused or self.selecting or self.s["layout"] == "vn" or self.s["mode"] != "auto":
+            return
+        hwnd = winapi.window_from_point(x, y)
+        if hwnd and winapi.is_own_window(hwnd) and winapi.is_click_through(hwnd):
+            # the click went through the translation overlay to the page below it
+            fg = winapi.root_window(winapi.foreground_window())
+            hwnd = fg if fg and not winapi.is_own_window(fg) else self.target_hwnd
+        if not hwnd or winapi.is_own_window(hwnd):
+            return self._click_skip("on LazyK")  # the toolbar, a LazyK dialog
+        # anywhere in the browser counts (a "next page" button may sit outside the frame): only a page
+        # that really changes inside the frame starts a translation
+        proc = winapi.process_name(hwnd)
+        if proc == "explorer.exe" or not self._allowed_app(hwnd):
+            return self._click_skip("another app: " + proc)  # the desktop, the taskbar, another program
+        if down:
+            log.info("Click on the page: watching for a page turn")
+        self._auto_hwnd = hwnd
+        pw = getattr(self, "page_watcher", None)
+        if pw is not None and pw.is_alive():
+            if down:
+                pw.arm_click()
+            return
+        if down:
+            return
+        # no page watcher (turned off): just look again a moment after the click
+        self._cancel_auto_timer()
+        self._auto_job = self.root.after(max(800, int(self.s["scroll_delay_ms"])), self._auto_fire)
+
+    def _quiet_ms(self):
+        """How long the page must stand still before Auto translates. Webtoon: half as long - a strip
+        shows one or two bubbles at a time and a scan that turns out early is simply dropped when the
+        page moves again."""
+        d = int(self.s["scroll_delay_ms"])
+        if self.s["layout"] == "webtoon":
+            d = d // 2
+        return max(150, d)
+
+    def _click_skip(self, why):
+        if getattr(self, "_last_click_skip", None) != why:  # once per reason, for the log
+            self._last_click_skip = why
+            log.info("Click ignored (%s)", why)
 
     def _on_page_move(self, hwnd):
         """The page watcher saw the page scroll: same as a wheel scroll over it."""
@@ -1030,7 +1160,7 @@ class App:
         if auto:
             self._auto_hwnd = hwnd
             self._cancel_auto_timer()
-            delay = max(150, int(self.s["scroll_delay_ms"]))
+            delay = self._quiet_ms()
             self._auto_job = self.root.after(delay, self._auto_fire)
 
     def _auto_fire(self):

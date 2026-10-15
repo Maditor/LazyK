@@ -33,6 +33,7 @@ class TextBox:
         self._bg = None     # (rect, screenshot of what is under the box) for the see-through look
         self._pic = None    # its PhotoImage (Tk drops an image nobody references)
         self._regrab = None
+        self._glass = None  # (key, PhotoImage) of the last see-through box picture
 
     # ------------------------------------------------------------ window
     def _geometry(self):
@@ -112,7 +113,8 @@ class TextBox:
     def set_texts(self, texts):
         self.texts = [t for t in (texts or []) if t and t.strip()]
         self._used = self._used or bool(self.texts)
-        self._bg = None  # the game behind may have changed: look again
+        if self.texts:
+            self._bg = None  # a new line: the game behind may have changed, look again (an empty box keeps it)
         if not self.shown:
             self.show()
         else:
@@ -131,7 +133,7 @@ class TextBox:
             return
         c, s = self.canvas, self.s
         w, h = max(1, c.winfo_width()), max(1, c.winfo_height())
-        bg, fg = s["overlay_bg"], s["overlay_fg"]
+        bg, fg = s["tb_bg"], s["tb_fg"]
         c.delete("all")
         self._paint_box(w, h, bg)  # opacity / blur act on the box only: the text stays 100 %
         inner_w = max(40, w - 2 * PAD)
@@ -186,6 +188,7 @@ class TextBox:
                     winapi.show_no_activate(self.hwnd)
                 else:
                     self.win.deiconify()
+        self._bg_n = getattr(self, "_bg_n", 0) + 1  # which screenshot this is (for the picture cache)
         self._bg = (rect, img) if img is not None else None
         return img
 
@@ -195,18 +198,24 @@ class TextBox:
         radius = int(s["corner_radius"])
         outline = s["overlay_outline"] or ""
         try:
-            opacity, blur = int(s["overlay_opacity"]), int(s["overlay_blur"])
+            opacity, blur = int(s["tb_opacity"]), int(s["tb_blur"])
         except (TypeError, ValueError):
             opacity, blur = 100, 0
         self._pic = None
         if opacity < 100:
             shot = self._screen_under(w, h)
             if shot is not None:
-                try:
-                    from PIL import ImageTk
-                    self._pic = ImageTk.PhotoImage(glass_image(shot, (w, h), (0, 0), fill, opacity, blur, radius))
-                except Exception:
-                    log.exception("Text box: see-through box failed, painting it solid")
+                key = (getattr(self, "_bg_n", 0), w, h, fill, opacity, blur, radius)
+                if self._glass and self._glass[0] == key:
+                    self._pic = self._glass[1]  # same background and look: reuse (hover, empty box)
+                else:
+                    try:
+                        from PIL import ImageTk
+                        self._pic = ImageTk.PhotoImage(glass_image(shot, (w, h), (0, 0), fill, opacity, blur,
+                                                                   radius))
+                        self._glass = (key, self._pic)
+                    except Exception:
+                        log.exception("Text box: see-through box failed, painting it solid")
         if self._pic is not None:
             c.create_image(0, 0, image=self._pic, anchor="nw")
             if outline:
@@ -239,7 +248,7 @@ class TextBox:
             self.win.geometry(f"+{gx + dx}+{gy + dy}")
         else:
             self.win.geometry(f"{max(MIN_W, gw + dx)}x{max(MIN_H, gh + dy)}")
-        if self._regrab is None and int(self.s["overlay_opacity"]) < 100:
+        if self._regrab is None and int(self.s["tb_opacity"]) < 100:
             self._regrab = self.win.after(60, self._after_move)  # see-through: what is behind changed
 
     def _after_move(self):

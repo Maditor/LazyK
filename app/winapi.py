@@ -209,6 +209,13 @@ def window_from_point(x, y):
     return root_window(user32.WindowFromPoint(wintypes.POINT(int(x), int(y))))
 
 
+def is_click_through(hwnd) -> bool:
+    """A window the mouse passes through (the translation overlay)."""
+    if not IS_WIN or not hwnd:
+        return False
+    return bool(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE) & WS_EX_TRANSPARENT)
+
+
 def is_own_window(hwnd) -> bool:
     """True for any window of this process (toolbar, font picker, dialogs, overlay)."""
     if not IS_WIN or not hwnd:
@@ -350,6 +357,35 @@ def system_light_theme() -> bool:
             return bool(winreg.QueryValueEx(k, "SystemUsesLightTheme")[0])
     except OSError:
         return False
+
+
+def dark_title_bar(widget, caption="#131418", text="#e8e9ee"):
+    """Dark title bar for a Tk window (Windows 10 1809+ / 11), matching LazyK's dark dialogs, so the
+    light logo is readable. On Windows 11 the bar also takes the dialog's own background colour."""
+    if not IS_WIN:
+        return
+    try:
+        hwnd = wintypes.HWND(tk_toplevel_hwnd(widget))
+        dwm = ctypes.windll.dwmapi
+        on = ctypes.c_int(1)
+        if dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), 4) != 0:  # DWMWA_USE_IMMERSIVE_DARK_MODE
+            dwm.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(on), 4)      # same, Windows 10 before 20H1
+
+        def ref(hexa):  # COLORREF = 0x00BBGGRR
+            r, g, b = (int(hexa[i:i + 2], 16) for i in (1, 3, 5))
+            return ctypes.c_int(r | (g << 8) | (b << 16))
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(ref(caption)), 4)  # DWMWA_CAPTION_COLOR (Win 11)
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(ref(text)), 4)     # DWMWA_TEXT_COLOR (Win 11)
+        # repaint the frame now (otherwise it changes only at the next activation)
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020)
+    except Exception:
+        log.debug("dark title bar not applied", exc_info=True)
+
+
+def is_window(hwnd) -> bool:
+    if not IS_WIN or not hwnd:
+        return bool(hwnd)
+    return bool(user32.IsWindow(wintypes.HWND(hwnd)))
 
 
 def tk_toplevel_hwnd(widget):

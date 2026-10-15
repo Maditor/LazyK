@@ -239,6 +239,12 @@ class PopupMenu:
     def _maybe_close(self):
         if self.closed:
             return
+        import time
+        top = self._top()
+        if time.time() < getattr(top, "_hold_until", 0):
+            # a pick just now made another LazyK window take focus (the text box, a toast…): stay open
+            top.win.after(60, top.win.focus_force)
+            return
         try:
             focus = self.win.focus_get()
         except (tk.TclError, KeyError):
@@ -251,9 +257,12 @@ class PopupMenu:
         top = self._top()
         stay = mode == "keep" or (top.persistent and mode != "close")
         if stay:
+            import time
+            top._hold_until = time.time() + 0.8
             if cb:
                 cb()
             top.refresh()            # new check marks / values, same place
+            top.win.after(80, lambda: (not top.closed) and top.win.focus_force())
             return
         top.close()
         if cb:
@@ -262,6 +271,12 @@ class PopupMenu:
     def close(self, silent=False):
         if self.closed:
             return
+        if self.parent is None:  # remember which submenus were open (to reopen the same place later)
+            path, m = [], self
+            while m is not None and m._open_name and m.child is not None:
+                path.append(m._open_name)
+                m = m.child
+            self.last_path = path
         self.closed = True
         if self.child:
             self.child.close(silent=True)

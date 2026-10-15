@@ -24,6 +24,8 @@ SMALL_W = 120        # width of the gray copy (px)
 TICK_S = 0.12        # how often the page is looked at
 STILL = 1.5          # mean gray difference below this = nothing moved
 KEEP_LOOKS = 6       # a slow scroll may take this many looks to show as a shift
+CLICK_CHANGED = 6.0  # mean gray difference that means a click turned the page
+CLICK_WAIT_S = 6.0   # how long after a click a page change still counts
 BANDS = 4            # the width is cut in vertical bands; most of them must agree on the shift
 
 
@@ -98,6 +100,13 @@ class PageWatcher(threading.Thread):
         self.app = app
         self._stop_ev = threading.Event()
         self.last_move = 0.0
+        self._arm_t = 0.0       # time of the last click on the page (set from the Tk thread)
+        self._click = None      # (look at click time, its key, time) while waiting for the page to turn
+        self._settle = None     # (last look, until) while a page turned by a click is still loading
+
+    def arm_click(self):
+        """The user pressed the mouse on the page: if the page turns now, translate the new one."""
+        self._arm_t = time.time()
 
     def stop(self):
         self._stop_ev.set()
@@ -141,6 +150,39 @@ class PageWatcher(threading.Thread):
                  max(0, int(sx * (ax + x1)) - 1):max(0, int(sx * (ax + x2)) + 2)] = False
         return keep
 
+    def _check_click(self, cur, ckey, rect, hwnd):
+        if self._settle is not None:  # the new page is still loading: Auto waits until it stands still
+            last, t_end = self._settle
+            if time.time() > t_end or last.shape != cur.shape or self.app.busy or self.app.overlay.visible:
+                self._settle = None
+            elif float(np.abs(cur - last).mean()) > STILL:
+                self.app.q.put(("pagemove", hwnd))
+                self._settle = (cur, t_end)
+            else:
+                self._settle = (cur, t_end)
+        if self._arm_t:
+            self._click, self._arm_t = (cur, ckey, self._arm_t), 0.0
+            return
+        if self._click is not None and time.time() - self._click[2] > CLICK_WAIT_S:
+            log.info("No page turn after the click (the page did not change)")
+        if self._click is None:
+            return
+        ref, key, t0 = self._click
+        if time.time() - t0 > CLICK_WAIT_S:
+            self._click = None  # the click did not turn the page
+            return
+        if key != ckey or ref.shape != cur.shape:
+            self._click = (cur, ckey, t0)  # the overlay came or went: compare from here on
+            return
+        keep = self._keep_mask(rect, cur.shape)
+        diff = np.abs(cur - ref)[keep]
+        if diff.size and float(diff.mean()) > CLICK_CHANGED:
+            log.info("The page changed after a click: translating the new page")
+            self._click = None
+            self.last_move = time.time()
+            self.app.q.put(("pagemove", hwnd))  # hides the old translation; Auto runs once it settles
+            self._settle = (cur, time.time() + CLICK_WAIT_S)
+
     def run(self):
         try:
             import mss
@@ -154,6 +196,9 @@ class PageWatcher(threading.Thread):
             try:
                 tgt = self._watched()
                 if tgt is None:
+                    if self._arm_t and time.time() - self._arm_t > 1.0:
+                        self._arm_t = 0.0
+                        log.info("Click on the page, but the page window is not in front: not watched")
                     prev = None
                     continue
                 rect, hwnd = tgt
@@ -167,6 +212,7 @@ class PageWatcher(threading.Thread):
                 key = (x, y, w, h, ov.version, self.app.busy)
                 shot = sct.grab({"left": x, "top": y, "width": w, "height": h})
                 cur = _small(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
+                self._check_click(cur, (x, y, w, h, ov.visible), rect, hwnd)
                 if key != prev_key or prev is None or prev.shape != cur.shape:
                     prev, prev_key, stale = cur, key, 0
                     continue

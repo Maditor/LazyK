@@ -51,9 +51,16 @@ PIP_ARGS = ["install", "--no-deps", "--disable-pip-version-check", "piper-tts==1
 
 
 def can_install() -> bool:
-    """Piper can be installed from inside the app when LazyK runs from Python (not the built exe)."""
+    """Piper can be installed from inside the app when LazyK runs from Python (not the built exe), and
+    only where onnxruntime runs (not 32-bit Windows: no wheels there)."""
     import sys
-    return not getattr(sys, "frozen", False)
+    if getattr(sys, "frozen", False):
+        return False
+    try:
+        import onnxruntime  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def install():

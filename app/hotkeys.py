@@ -1,6 +1,7 @@
 """Global hotkeys and scroll watching via pynput, matched by virtual-key code (layout-safe)."""
 import logging
 import sys
+import time
 
 from pynput import keyboard, mouse
 
@@ -64,25 +65,50 @@ def parse_hotkey(spec: str):
     return frozenset(mods), vk
 
 
+VK_PACKET = 0xE7  # a character typed through an input method (Unikey, EVKey, IME): no real key code
+
+
 def _vk_of(key):
     if isinstance(key, keyboard.KeyCode):
-        return key.vk
+        vk = key.vk
+        if (vk is None or vk == VK_PACKET) and key.char and len(key.char) == 1 and key.char.isalnum() \
+                and key.char.isascii():
+            vk = ord(key.char.upper())  # still match "alt+shift+v" when the key came through an input method
+        return vk
     try:
         return key.value.vk
     except AttributeError:
         return None
 
 
+_WIN_MOD_VKS = {"ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,), "win": (0x5B, 0x5C)}
+
+
+def _win_mods():
+    """Modifiers really held right now (Windows). The tracked set can keep a modifier whose release was
+    never seen (Alt+Tab, Win+Shift+S, a game grabbing the keyboard), and then no hotkey matched."""
+    import ctypes
+    get = ctypes.windll.user32.GetAsyncKeyState
+    return frozenset(m for m, vks in _WIN_MOD_VKS.items() if any(get(v) & 0x8000 for v in vks))
+
+
+def _combo(mods, vk):
+    base = VK_NAMES.get(vk) or (chr(vk).lower() if 0x30 <= vk <= 0x5A else hex(vk))
+    return "+".join([m for m in ("ctrl", "alt", "shift", "win") if m in mods] + [base])
+
+
 class InputWatcher:
     """Calls on_hotkey(name) for bindings and on_scroll(x, y) for wheel / navigation keys."""
 
-    def __init__(self, bindings: dict, on_hotkey, on_scroll=None):
+    def __init__(self, bindings: dict, on_hotkey, on_scroll=None, on_click=None):
         self.on_hotkey = on_hotkey
         self.on_scroll = on_scroll
+        self.on_click = on_click
         self.held = set()
         self.bindings = {}
         self._capture = None      # callback(spec | None) while the user picks a new key
         self._swallow_up = set()  # mouse buttons whose release must also be hidden from the browser
+        self._down = {}           # vk -> time of its last press: Windows repeats the press while held
         self.set_bindings(bindings)
         self._kb = None
         self._ms = None
@@ -111,6 +137,11 @@ class InputWatcher:
             cb(spec)
 
     def _mods(self):
+        if sys.platform == "win32":
+            try:
+                return _win_mods()
+            except Exception:  # noqa: BLE001
+                pass
         return frozenset(m for m, keys in MOD_KEYS.items() if self.held & keys)
 
     def _press(self, key):
@@ -130,20 +161,38 @@ class InputWatcher:
                 order = [m for m in ("ctrl", "alt", "shift", "win") if m in mods]
                 self._finish_capture("+".join(order + [base]))
             return
+        now = time.monotonic()
+        # a repeat comes every ~30-500 ms while held; a lost release must not block the key for good
+        repeat = now - self._down.get(vk, -9) < 1.1
+        self._down[vk] = now
         name = self.bindings.get((mods, vk))
         if name:
+            if repeat:
+                return  # key held down: one action per press (a held key would toggle on / off / on...)
+            log.info("Hotkey %s -> %s", _combo(mods, vk), name)
             self.on_hotkey(name)
+        elif mods and not repeat and mods != frozenset({"shift"}):
+            # a shortcut-looking combination that matched nothing: logged, to see why a hotkey "does nothing"
+            log.debug("Keys %s: no LazyK action", _combo(mods, vk))
         elif not mods and vk in SCROLL_VKS and self.on_scroll:
             self.on_scroll(None, None)
 
     def _release(self, key):
         self.held.discard(key)
+        vk = _vk_of(key)
+        if vk is not None:
+            self._down.pop(vk, None)
         if key in MOD_KEYS["alt"]:
             self.held -= MOD_KEYS["alt"]  # AltGr / lost releases
 
     def _wheel(self, x, y, _dx, _dy):
         if self.on_scroll:
             self.on_scroll(x, y)
+
+    def _click(self, x, y, button, pressed):
+        # a left click may turn the page in click-to-advance readers
+        if self.on_click and getattr(button, "name", "") == "left":
+            self.on_click(x, y, pressed)
 
     def _mouse_filter(self, msg, data):
         """Windows low-level mouse hook. A bound side / wheel button runs its action and is hidden
@@ -179,7 +228,7 @@ class InputWatcher:
         self._kb.daemon = True
         self._kb.start()
         kw = {"win32_event_filter": self._mouse_filter} if sys.platform == "win32" else {}
-        self._ms = mouse.Listener(on_scroll=self._wheel, **kw)
+        self._ms = mouse.Listener(on_scroll=self._wheel, on_click=self._click, **kw)
         self._ms.daemon = True
         self._ms.start()
 
@@ -193,7 +242,7 @@ class InputWatcher:
             restarted.append("keyboard")
         if self._ms is not None and not self._ms.is_alive():
             kw = {"win32_event_filter": self._mouse_filter} if sys.platform == "win32" else {}
-            self._ms = mouse.Listener(on_scroll=self._wheel, **kw)
+            self._ms = mouse.Listener(on_scroll=self._wheel, on_click=self._click, **kw)
             self._ms.daemon = True
             self._ms.start()
             restarted.append("mouse")

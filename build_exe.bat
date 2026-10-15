@@ -53,6 +53,20 @@ if errorlevel 1 (
 rem build\ is only PyInstaller's scratch folder (its exe cannot run)
 rmdir /s /q build 2>nul
 
+rem The bubble model (comic_bubbles.onnx + .json) goes into the app: from models\ here, else from
+rem the user's models folder
+set MSRC=
+if exist "models\comic_bubbles.onnx" if exist "models\comic_bubbles.json" set MSRC=models
+if not defined MSRC if exist "%LOCALAPPDATA%\LazyK\models\comic_bubbles.onnx" if exist "%LOCALAPPDATA%\LazyK\models\comic_bubbles.json" set MSRC=%LOCALAPPDATA%\LazyK\models
+if defined MSRC (
+  if not exist "%OUT%\models" mkdir "%OUT%\models"
+  copy /y "%MSRC%\comic_bubbles.onnx" "%OUT%\models\" >nul
+  copy /y "%MSRC%\comic_bubbles.json" "%OUT%\models\" >nul
+  echo Bubble model included from %MSRC%
+) else (
+  echo NOTE: bubble model not found ^(models\comic_bubbles.onnx^) - LazyK will use its built-in bubble finder
+)
+
 echo === 3/4 Copying settings ===
 if exist "%TEMP%\lazyk_settings.json" (
   move /y "%TEMP%\lazyk_settings.json" "%OUT%\settings.json" >nul

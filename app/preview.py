@@ -35,13 +35,21 @@ def render_preview(img: Image.Image, items, settings, scale=1.0) -> Image.Image:
     out = img.convert("RGB").copy()
     dr = ImageDraw.Draw(out)
     r = settings["corner_radius"] * scale
-    for b in layout_items(items, img.width, img.height, settings, scale, metrics):
+    boxes = layout_items(items, img.width, img.height, settings, scale, metrics)
+    for b in boxes:
+        for c in b.get("covers") or ():
+            dr.rectangle(c, fill=b.get("fill", settings["overlay_bg"]))
         if b["kind"] == "poly":
             pts = b["poly"]
             dr.polygon(list(zip(pts[0::2], pts[1::2])), fill=b["fill"])
+        elif b["kind"] == "free":
+            if b["patch"]:
+                dr.rounded_rectangle(b["patch"], radius=min(r, 4 * scale), fill=b["fill"])
+            dr.rounded_rectangle(b["rect"], radius=min(r, 4 * scale), fill=b["fill"])
         else:
             dr.rounded_rectangle(b["rect"], radius=r, fill=b.get("fill", settings["overlay_bg"]),
                                  outline=settings["overlay_outline"] or None)
+    for b in boxes:  # all text above all boxes
         f = font(b["size"])
         for line, cx, cy in b["lines"]:
             dr.text((cx, cy), line, font=f, fill=b.get("ink", settings["overlay_fg"]), anchor="mm")
