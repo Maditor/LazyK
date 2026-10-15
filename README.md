@@ -25,7 +25,7 @@ LazyK chạy trên **Windows**. Bạn đọc manga, manhwa, webtoon trên trình
 
 **Bản `.exe`:** tải ở **[Releases](https://github.com/Maditor/LazyK/releases)**, giải nén, mở **`LazyK.exe`** (Windows cảnh báo thì bấm **More info → Run anyway**).
 
-**Từ mã nguồn:** tải mã nguồn, bấm đúp **`setup.bat`** (tự cài Python 3.12 và thư viện, 1–5 phút), sau đó mỗi lần dùng chạy **`run.bat`**.
+**Từ mã nguồn:** tải mã nguồn, bấm đúp **`setup.bat`** (tự cài Python 3.12, thư viện và model tìm bóng thoại ~170 MB; vài phút), sau đó mỗi lần dùng chạy **`run.bat`**.
 
 Yêu cầu: Windows 10 (2004+) / 11, có mạng. Máy **32-bit** không đọc chữ trên máy được (dùng chế độ AI).
 
@@ -53,7 +53,7 @@ Mở truyện trên trình duyệt và đọc như bình thường. Dừng cuộ
 
 Chấm tròn: 🟢 bật · 🔵 đọc chữ · 🟣 dịch · ⚪ tạm dừng · 🔴 lỗi (rê chuột để xem).
 
-**Đọc trên máy (Local)** mặc định chạy bằng card đồ hoạ rời (nhanh hơn CPU nhiều); đổi ở *OCR device*. Tiếng Hàn cần tải thêm model (13 MB) ở *OCR models*; *manga-ocr* (460 MB) đọc chữ Nhật viết tay chính xác hơn.
+**Đọc trên máy (Local)** mặc định chạy bằng card đồ hoạ rời (nhanh hơn CPU nhiều); đổi ở *OCR device*. Tiếng Hàn cần tải thêm model (13 MB) ở *OCR models*; *manga-ocr* (460 MB) đọc chữ Nhật viết tay chính xác hơn. Model tìm bóng thoại cũng tải lại được ở đây nếu thiếu.
 
 **Phím tắt** (đổi được ở ⚙ → More):
 
@@ -92,10 +92,10 @@ Khi báo lỗi, gửi kèm **`logs\lazyk.log`**.
 
 ## 📦 Tự đóng gói
 
-- **`build_exe.bat`**: tạo `dist\LazyK\LazyK.exe`. Model tìm bóng (`comic_bubbles.onnx` + `.json`, đặt trong `models\` cạnh `main.py`) được chép kèm. Thư mục này có `settings.json` chứa key, **đừng gửi nguyên thư mục**.
+- **`build_exe.bat`**: tạo `dist\LazyK\LazyK.exe`, chép kèm model tìm bóng mà `setup.bat` đã tải. Thư mục này có `settings.json` chứa key, **đừng gửi nguyên thư mục**.
 - **`build_installer.bat`**: tạo `Output\LazyK-Setup-<phiên bản>.exe` để chia sẻ (tự bỏ `settings.json` và log).
 
-Model tìm bóng dựa trên [ogkalu/comic-text-and-bubble-detector](https://huggingface.co/ogkalu/comic-text-and-bubble-detector); kiểm tra giấy phép của model trước khi chia sẻ bản build.
+Model tìm bóng: [ogkalu/comic-text-and-bubble-detector](https://huggingface.co/ogkalu/comic-text-and-bubble-detector) (giấy phép Apache-2.0).
 
 ## 🔐 Quyền riêng tư
 

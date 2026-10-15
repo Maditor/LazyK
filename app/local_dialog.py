@@ -10,6 +10,8 @@ ROWS = [
     ("builtin", "Japanese · Chinese · English", "PaddleOCR PP-OCRv6. Reads vertical and horizontal text."),
     ("ko", "Korean", "PaddleOCR PP-OCRv5 Korean, for manhwa and webtoons."),
     ("mocr", "manga-ocr", "Optional. Reads hand-drawn Japanese manga lettering more accurately."),
+    ("bubbles", "Speech bubble finder", "RT-DETR (Apache-2.0). Finds bubbles, joined bubbles and free text "
+                                         "on manga / webtoon pages; setup.bat downloads it."),
 ]
 
 

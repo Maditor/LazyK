@@ -43,6 +43,13 @@ FILES = {
     "korean_rec.onnx": [
         ("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv5/rec/"
          "korean_PP-OCRv5_rec_mobile.onnx", "cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b")],
+    # the speech-bubble finder (RT-DETR, Apache-2.0): the model's own ONNX export + its two configs
+    "comic_bubbles_config.json": [
+        ("https://huggingface.co/ogkalu/comic-text-and-bubble-detector/resolve/main/config.json", None)],
+    "comic_bubbles_preproc.json": [
+        ("https://huggingface.co/ogkalu/comic-text-and-bubble-detector/resolve/main/preprocessor_config.json", None)],
+    "comic_bubbles.onnx": [
+        ("https://huggingface.co/ogkalu/comic-text-and-bubble-detector/resolve/main/detector.onnx", None)],
 }
 # The manga-ocr files of both sources must not be mixed (vocab and decoder belong together)
 MOCR_SET = ("mocr_encoder.onnx", "mocr_decoder.onnx", "mocr_vocab.txt")
@@ -51,6 +58,9 @@ PACKS = {
     "builtin": {"name": "Japanese · Chinese · English", "files": [], "size": "built in"},
     "ko": {"name": "Korean", "files": ["korean_rec.onnx"], "size": "13 MB"},
     "mocr": {"name": "manga-ocr (Japanese manga lettering)", "files": list(MOCR_SET), "size": "460 MB"},
+    "bubbles": {"name": "Speech bubble finder (RT-DETR)",
+                "files": ["comic_bubbles_config.json", "comic_bubbles_preproc.json", "comic_bubbles.onnx"],
+                "size": "168 MB"},
 }
 
 
@@ -66,6 +76,9 @@ def path(name):
 
 
 def pack_ready(pack):
+    if pack == "bubbles":  # shipped with LazyK, downloaded, or an own export (comic_bubbles.json)
+        from . import bubble_model
+        return bubble_model.installed()
     return all(os.path.isfile(path(f)) for f in PACKS[pack]["files"])
 
 

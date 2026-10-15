@@ -89,6 +89,9 @@ rem Piper --no-deps: it would add a second onnxruntime next to onnxruntime-direc
 "%PY%" -m pip install --no-deps piper-tts==1.8.0
 if errorlevel 1 (echo Install failed. & pause & exit /b 1)
 echo.
+echo Downloading the speech bubble model ^(168 MB, once^) ...
+"%PY%" main.py --get-models
+echo.
 echo Done. Start with run.bat
 pause
 exit /b 0

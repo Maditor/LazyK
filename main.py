@@ -83,15 +83,41 @@ def run_tts(text, settings):
     print("Error: " + errors[0] if errors else "Done")
 
 
+def get_models():
+    """setup.bat: download the speech bubble model (manga / webtoon) once, with a progress line."""
+    from app import local_ocr
+    if local_ocr.pack_ready("bubbles"):
+        print("Speech bubble model: already there")
+        return 0
+    last = [-1]
+
+    def progress(frac, text):
+        pct = int(frac * 100)
+        if pct != last[0]:
+            last[0] = pct
+            print(f"\r  {pct:3d}%  {text}          ", end="", flush=True)
+    try:
+        local_ocr.download_pack("bubbles", progress)
+    except Exception as e:  # noqa: BLE001
+        print(f"\nCould not download the speech bubble model: {e}")
+        print("LazyK still works (built-in bubble finder); download it later in the server menu -> OCR models.")
+        return 1
+    print("\nSpeech bubble model ready")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="LazyK")
     ap.add_argument("--demo", action="store_true", help="show calibration boxes, no API")
     ap.add_argument("--image", help="translate one image file and save a preview")
     ap.add_argument("--list-gpus", metavar="FILE", help=argparse.SUPPRESS)  # used by the app: lists graphics cards
     ap.add_argument("--tts", metavar="TEXT", help="read TEXT aloud with the configured voice, then exit")
+    ap.add_argument("--get-models", action="store_true", help="download the speech bubble model (setup.bat)")
     args = ap.parse_args()
 
     fix_streams()
+    if args.get_models:
+        sys.exit(get_models())
     if args.list_gpus:  # child process of the OCR device menu: no logging, no settings, no window
         from app import gpus
         gpus.write_listing(args.list_gpus)

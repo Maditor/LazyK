@@ -53,18 +53,19 @@ if errorlevel 1 (
 rem build\ is only PyInstaller's scratch folder (its exe cannot run)
 rmdir /s /q build 2>nul
 
-rem The bubble model (comic_bubbles.onnx + .json) goes into the app: from models\ here, else from
-rem the user's models folder
+rem The bubble model goes into the app: from models\ here, else from the user's models folder
+rem (setup.bat downloads it there): comic_bubbles.onnx + its settings (.json, or _config/_preproc.json)
 set MSRC=
-if exist "models\comic_bubbles.onnx" if exist "models\comic_bubbles.json" set MSRC=models
-if not defined MSRC if exist "%LOCALAPPDATA%\LazyK\models\comic_bubbles.onnx" if exist "%LOCALAPPDATA%\LazyK\models\comic_bubbles.json" set MSRC=%LOCALAPPDATA%\LazyK\models
+if exist "models\comic_bubbles.onnx" set MSRC=models
+if not defined MSRC if exist "%LOCALAPPDATA%\LazyK\models\comic_bubbles.onnx" set MSRC=%LOCALAPPDATA%\LazyK\models
 if defined MSRC (
   if not exist "%OUT%\models" mkdir "%OUT%\models"
-  copy /y "%MSRC%\comic_bubbles.onnx" "%OUT%\models\" >nul
-  copy /y "%MSRC%\comic_bubbles.json" "%OUT%\models\" >nul
+  for %%F in (comic_bubbles.onnx comic_bubbles.json comic_bubbles_config.json comic_bubbles_preproc.json) do (
+    if exist "%MSRC%\%%F" copy /y "%MSRC%\%%F" "%OUT%\models\" >nul
+  )
   echo Bubble model included from %MSRC%
 ) else (
-  echo NOTE: bubble model not found ^(models\comic_bubbles.onnx^) - LazyK will use its built-in bubble finder
+  echo NOTE: bubble model not found - run setup.bat again to download it ^(LazyK then uses its built-in finder^)
 )
 
 echo === 3/4 Copying settings ===

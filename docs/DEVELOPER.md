@@ -203,7 +203,9 @@ app/bubbles.py       page-level bubble finder (manga / webtoon): closes dashed /
                      thickening dark lines (seal 1-5 px), white then light-gray then dark bubbles; lines of one
                      bubble are grouped together, never across bubbles; empty_bubbles() = bubbles with letters but
                      no detected line (re-read enlarged by LocalOcr._reread_empty)
-app/bubble_model.py  optional RT-DETR comic text & bubble detector (ONNX, exported from the HuggingFace model
+app/bubble_model.py  RT-DETR comic text & bubble detector (ogkalu/comic-text-and-bubble-detector, Apache-2.0; its own
+                     detector.onnx + config/preprocessor json, downloaded by setup.bat (main.py --get-models) or the
+                     OCR models dialog as pack "bubbles"; an own export with comic_bubbles.json also works
                      into the models folder as comic_bubbles.onnx + .json). When installed (shipped in models\ next to the exe / main.py, else the user models folder) it is always used:
                      bubbles.from_model() groups OCR lines by the model's bubble / text_free boxes and cuts each
                      bubble's paper at its box (_shape_in_box; ellipse for toned bubbles); empty model bubbles are re-read

@@ -25,19 +25,54 @@ _lock = threading.Lock()
 _cache = {}
 
 
-def files():
-    """The model shipped with LazyK (models/ next to LazyK.exe / main.py), else the one in the user's
-    models folder."""
+REPO = "ogkalu/comic-text-and-bubble-detector"  # Apache-2.0
+CONFIG = NAME + "_config.json"      # the model's config.json (labels) as downloaded
+PREPROC = NAME + "_preproc.json"    # its preprocessor_config.json (input size, scaling)
+
+
+def _dirs():
     from . import config, local_ocr
-    shipped = os.path.join(config.app_dir(), "models")
-    if os.path.isfile(os.path.join(shipped, NAME + ".onnx")) and os.path.isfile(os.path.join(shipped, NAME + ".json")):
-        return os.path.join(shipped, NAME + ".onnx"), os.path.join(shipped, NAME + ".json")
-    return local_ocr.path(NAME + ".onnx"), local_ocr.path(NAME + ".json")
+    return [os.path.join(config.app_dir(), "models"), local_ocr.models_dir()]
+
+
+def _ready_in(d):
+    if not os.path.isfile(os.path.join(d, NAME + ".onnx")):
+        return False
+    return os.path.isfile(os.path.join(d, NAME + ".json")) or (
+        os.path.isfile(os.path.join(d, CONFIG)) and os.path.isfile(os.path.join(d, PREPROC)))
+
+
+def folder():
+    """Where the model is: shipped with LazyK (models/ next to LazyK.exe / main.py), else the user's
+    models folder. None when it is in neither."""
+    return next((d for d in _dirs() if _ready_in(d)), None)
 
 
 def installed() -> bool:
-    onnx, meta = files()
-    return os.path.isfile(onnx) and os.path.isfile(meta)
+    return folder() is not None
+
+
+def load_meta(d):
+    """Input size, scaling and labels: comic_bubbles.json (own export), else built from the model's
+    own config.json + preprocessor_config.json (downloaded from HuggingFace)."""
+    own = os.path.join(d, NAME + ".json")
+    if os.path.isfile(own):
+        with open(own, encoding="utf-8") as f:
+            return json.load(f)
+    with open(os.path.join(d, CONFIG), encoding="utf-8") as f:
+        cfg = json.load(f)
+    with open(os.path.join(d, PREPROC), encoding="utf-8") as f:
+        pre = json.load(f)
+    size = pre.get("size") or {}
+    h = int(size.get("height") or size.get("shortest_edge") or 640)
+    w = int(size.get("width") or size.get("shortest_edge") or 640)
+    return {"repo": REPO, "input": [h, w],
+            "rescale": float(pre.get("rescale_factor", 1 / 255)) if pre.get("do_rescale", True) else 1.0,
+            "normalize": bool(pre.get("do_normalize", False)),
+            "mean": [float(v) for v in (pre.get("image_mean") or [0, 0, 0])],
+            "std": [float(v) for v in (pre.get("image_std") or [1, 1, 1])],
+            "labels": {str(k): v for k, v in (cfg.get("id2label") or {}).items()},
+            "focal": bool(cfg.get("use_focal_loss", True))}
 
 
 class Detector:
@@ -45,8 +80,17 @@ class Detector:
         from . import local_ocr
         self.meta = meta
         self.sess = local_ocr._session(onnx_path, use_gpu)
-        self.input = self.sess.get_inputs()[0].name
+        ins, outs = self.sess.get_inputs(), self.sess.get_outputs()
+        self.input = next((i.name for i in ins if len(i.shape or []) == 4), ins[0].name)
+        self.sizes_input = next((i.name for i in ins if i.name != self.input), None)  # RT-DETR style
+        shp = next(i.shape for i in ins if i.name == self.input)
+        if isinstance(shp[2], int) and isinstance(shp[3], int) and shp[2] > 0 and shp[3] > 0:
+            meta = dict(meta, input=[shp[2], shp[3]])  # a fixed input size wins over the config
+            self.meta = meta
+        self.out_names = [o.name for o in outs]
         self.labels = {int(k): v for k, v in meta["labels"].items()}
+        log.info("Bubble model I/O: in %s, out %s, input %s", [(i.name, i.shape) for i in ins],
+                 [(o.name, o.shape) for o in outs], meta["input"])
 
     def _prep(self, img: Image.Image):
         h, w = self.meta["input"]
@@ -102,7 +146,19 @@ class Detector:
 
     def _run(self, img: Image.Image, conf):
         W, H = img.size
-        logits, boxes = self.sess.run(None, {self.input: self._prep(img)})
+        feed = {self.input: self._prep(img)}
+        if self.sizes_input:  # the original RT-DETR export also takes the image size
+            h, w = self.meta["input"]
+            feed[self.sizes_input] = np.array([[w, h]], dtype=np.int64)
+        res = dict(zip(self.out_names, self.sess.run(None, feed)))
+        if "labels" in res and "scores" in res and "boxes" in res:  # already decoded: labels, xyxy, scores
+            return self._decoded(res, W, H, conf)
+        logits = res.get("logits")
+        boxes = res.get("pred_boxes")
+        if logits is None or boxes is None:  # unnamed: the one ending in 4 values is the boxes
+            arrs = list(res.values())
+            boxes = next(a for a in arrs if a.shape[-1] == 4)
+            logits = next(a for a in arrs if a is not boxes)
         logits, boxes = logits[0].astype(np.float32), boxes[0].astype(np.float32)
         Q, C = logits.shape
         if self.meta.get("focal", True):
@@ -128,11 +184,33 @@ class Detector:
         return out
 
 
+def _decoded_impl(self, res, W, H, conf):
+    labels, boxes, scores = res["labels"][0], res["boxes"][0].astype(np.float32), res["scores"][0]
+    h, w = self.meta["input"]
+    if boxes.size and boxes.max() <= 1.5:  # normalized
+        sx, sy = W, H
+    else:  # in model-input pixels
+        sx, sy = W / float(w), H / float(h)
+    out = []
+    for lab, b, sc in zip(labels, boxes, scores):
+        if sc <= conf:
+            continue
+        x1, y1, x2, y2 = b[0] * sx, b[1] * sy, b[2] * sx, b[3] * sy
+        out.append({"label": self.labels.get(int(lab), str(int(lab))), "score": float(sc),
+                    "box": (max(0.0, float(x1)), max(0.0, float(y1)), min(float(W), float(x2)), min(float(H), float(y2)))})
+    out.sort(key=lambda d: -d["score"])
+    return out
+
+
+Detector._decoded = _decoded_impl
+
+
 def get(use_gpu=False):
     """The loaded detector, or None when the model is not installed (or cannot load)."""
     if not installed():
         return None
-    onnx, meta_path = files()
+    d = folder()
+    onnx = os.path.join(d, NAME + ".onnx")
     from . import local_ocr
     key = (onnx, os.path.getmtime(onnx), bool(use_gpu), local_ocr.GPU_ID if use_gpu else 0)
     with _lock:
@@ -140,9 +218,7 @@ def get(use_gpu=False):
             _cache.clear()
             try:
                 t = time.time()
-                with open(meta_path, encoding="utf-8") as f:
-                    meta = json.load(f)
-                _cache[key] = Detector(onnx, meta, use_gpu)
+                _cache[key] = Detector(onnx, load_meta(d), use_gpu)
                 log.info("Bubble model loaded in %.1fs", time.time() - t)
             except Exception:
                 log.exception("Bubble model could not be loaded: using the built-in bubble finder")
