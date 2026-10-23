@@ -143,19 +143,33 @@ class PopupMenu:
             x.configure(bg=T.PANEL)
 
     # ------------------------------------------------------------ placement
+    # Positions are computed from where LazyK itself put each menu (self._geo), never read back from Tk:
+    # a menu that was opened a moment ago (or is being rebuilt) can report 0,0 for a while, and a submenu
+    # placed from that jumped to the top of the screen.
+    def _row_offset(self, row):
+        """y of a row inside its menu window."""
+        y, wdg = 0, row
+        while wdg is not None and wdg is not self.parent.win:
+            y += wdg.winfo_y()
+            wdg = wdg.master
+        return y
+
     def _place(self, anchor):
         w = self.win
         w.update_idletasks()
         mw, mh = w.winfo_reqwidth(), w.winfo_reqheight()
         if anchor[0] == "side":
             row = anchor[1]
-            rx, ry = row.winfo_rootx(), row.winfo_rooty()
             pw = self.parent.win
-            L, Tp, R, B = winapi.work_area(rx, ry)
-            right = pw.winfo_rootx() + pw.winfo_width() + 2
-            x = right if right + mw <= R else pw.winfo_rootx() - mw - 2   # flip to the left side
+            pw.update_idletasks()
+            px, py, pwid, ph = self.parent._geo
+            pwid, ph = max(pwid, pw.winfo_reqwidth()), max(ph, pw.winfo_reqheight())
+            ry = py + self._row_offset(row)
+            L, Tp, R, B = winapi.work_area(px, ry)
+            right = px + pwid + 2
+            x = right if right + mw <= R else px - mw - 2   # flip to the left side
             # never lower than the parent menu (it may sit right above the toolbar) nor off screen
-            limit = min(B, pw.winfo_rooty() + pw.winfo_height())
+            limit = min(B, py + ph)
             y = max(Tp, min(ry - 5, limit - mh))
         else:
             x, top, bottom = anchor
@@ -167,18 +181,21 @@ class PopupMenu:
             else:
                 y = max(Tp, B - mh)
             x = max(L, min(x, R - mw))
+        self._geo = (int(x), int(y), mw, mh)
         w.geometry(f"+{int(x)}+{int(y)}")
 
     def _keep_on_screen(self):
         """After a rebuild the size may change: nudge the window back inside the work area."""
         w = self.win
         w.update_idletasks()
-        x, y, mw, mh = w.winfo_x(), w.winfo_y(), w.winfo_reqwidth(), w.winfo_reqheight()
+        x, y = self._geo[0], self._geo[1]
+        mw, mh = w.winfo_reqwidth(), w.winfo_reqheight()
         L, Tp, R, B = winapi.work_area(x, y)
         if self.parent is not None:
-            pw = self.parent.win
-            B = min(B, pw.winfo_rooty() + pw.winfo_height())
+            _px, py, _pw, ph = self.parent._geo
+            B = min(B, py + max(ph, self.parent.win.winfo_reqheight()))
         nx, ny = max(L, min(x, R - mw)), max(Tp, min(y, B - mh))
+        self._geo = (nx, ny, mw, mh)
         if (nx, ny) != (x, y):
             w.geometry(f"+{nx}+{ny}")
 

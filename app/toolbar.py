@@ -379,12 +379,19 @@ class Toolbar:
             if self.menu is not None:
                 return  # the user already opened a menu
             {self.btn_settings: self.open_settings_menu, self.btn_server: self.open_server_menu}[opener]()
-            m = self.menu
-            for name in path:  # open the same submenus again
-                if m is None:
-                    break
-                m.open_sub_by_name(name)
-                m = m.child
+            reopen(self.menu, list(path))
+
+        def reopen(m, names):
+            # one level at a time, each after its parent is drawn: a submenu placed next to a menu that is
+            # not on screen yet would land in a random spot
+            if m is None or m.closed or not names:
+                return
+            try:
+                m.win.update_idletasks()
+            except tk.TclError:
+                return
+            m.open_sub_by_name(names[0])
+            self.root.after(30, lambda: reopen(m.child, names[1:]))
         self.root.after(200, check)
 
     # ------------------------------------------------------------ OCR device (CPU / graphics card)
@@ -523,8 +530,10 @@ class Toolbar:
         def scanning():
             if s["layout"] == "vn":
                 r = s["vn_region"]
-                rows = [("item", "Auto-scan when text changes", bool(s["vn_auto"]), a.toggle_vn_auto,
-                         pretty(s["hotkey_vn_auto"])),
+                rows = [("item", "Auto", s["mode"] == "auto", lambda: a.set_mode("auto"), "each new line"),
+                        ("item", "Hotkey only", s["mode"] == "hotkey", lambda: a.set_mode("hotkey"),
+                         pretty(s["hotkey_translate"])),
+                        ("sep",),
                         ("item", "Ignore moving background", bool(s["vn_ignore_motion"]),
                          lambda: a.toggle_setting("vn_ignore_motion"), "watch only the text"),
                         ("sep",),
@@ -604,18 +613,25 @@ class Toolbar:
                     ("entry", "Volume", s["tts_volume"], a.set_tts_volume, "%"),
                     ("item", "Test voice", False, a.test_tts, None)]
 
-        def more():
+        def shortcuts():
             def key(label, name):
                 return ("item", label, False,
                         lambda: self._reopen_after(
-                            a.open_key_dialog(name, label.rstrip("…"), self._anchor(self.btn_settings))),
+                            a.open_key_dialog(name, label, self._anchor(self.btn_settings))),
                         pretty(s[name]), "close")
-            rows = [("header", "Keys"), key("Translate key", "hotkey_translate")]
-            if s["layout"] == "vn":
-                rows.append(key("Auto-scan key", "hotkey_vn_auto"))
-            rows += [key("Show / hide toolbar key", "hotkey_toolbar"),
-                     ("sep",),
-                     ("item", "Keep translation record", bool(s["record_enabled"]), a.toggle_record, None),
+            return [("header", "Click one to change it"),
+                    key("Translate now", "hotkey_translate"),
+                    key("Hide the translation", "hotkey_hide"),
+                    key("Pause / resume", "hotkey_pause"),
+                    key("Switch Auto / Hotkey", "hotkey_mode"),
+                    key("Draw a frame", "hotkey_region"),
+                    key("Show / hide toolbar", "hotkey_toolbar"),
+                    key("Quit LazyK", "hotkey_quit"),
+                    ("sep",),
+                    ("item", "Reset all to default", False, a.reset_hotkeys, None)]
+
+        def more():
+            rows = [("item", "Keep translation record", bool(s["record_enabled"]), a.toggle_record, None),
                      ("item", "Open translation record", False, a.open_record, None, "close"),
                      ("item", "Show in taskbar", bool(s["taskbar_icon"]), a.toggle_taskbar_icon, None),
                      ("item", "Developer mode", bool(s["developer_mode"]), a.toggle_developer_mode, "visible to OBS"),
@@ -627,7 +643,7 @@ class Toolbar:
         def top():
             layout = {"manga": "Manga", "webtoon": "Webtoon", "vn": "Visual novel"}.get(s["layout"], "Manga")
             if s["layout"] == "vn":
-                scan = "Auto" if s["vn_auto"] else "Manual"
+                scan = "Auto" if s["mode"] == "auto" else "Hotkey"
             else:
                 scan = ("Auto" if s["mode"] == "auto" else "Hotkey") + (" · frame" if region() else "")
             return [("sub", "Reading order", layout, order),
@@ -636,6 +652,7 @@ class Toolbar:
                      language),
                     ("sub", "Look", f"{s['font_min']} px", look),
                     ("sub", "Text to speech", "On" if s["tts_enabled"] else "Off", speech),
+                    ("sub", "Shortcuts", pretty(s["hotkey_translate"]), shortcuts),
                     ("sep",),
                     ("sub", "More", "", more),
                     ("sep",),
