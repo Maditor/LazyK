@@ -25,7 +25,7 @@ LazyK chạy trên **Windows**. Bạn đọc manga, manhwa, webtoon trên trình
 
 **Bản `.exe`:** tải ở **[Releases](https://github.com/Maditor/LazyK/releases)**, giải nén, mở **`LazyK.exe`** (Windows cảnh báo thì bấm **More info → Run anyway**).
 
-**Từ mã nguồn:** tải mã nguồn, bấm đúp **`setup.bat`** (tự cài Python 3.12, thư viện và model tìm bóng thoại ~170 MB; vài phút), sau đó mỗi lần dùng chạy **`run.bat`**.
+**Từ mã nguồn:** tải mã nguồn, bấm đúp **`setup.bat`** (tự cài Python 3.12, thư viện và model tìm bóng thoại ~170 MB; vài phút), sau đó mỗi lần dùng chạy **`run.bat`** (LazyK chạy không kèm cửa sổ cmd; nhật ký ở `logs\lazyk.log`).
 
 Yêu cầu: Windows 10 (2004+) / 11, có mạng. Máy **32-bit** không đọc chữ trên máy được (dùng chế độ AI).
 
@@ -55,22 +55,21 @@ Chấm tròn: 🟢 bật · 🔵 đọc chữ · 🟣 dịch · ⚪ tạm dừng
 
 **Đọc trên máy (Local)** mặc định chạy bằng card đồ hoạ rời (nhanh hơn CPU nhiều); đổi ở *OCR device*. Tiếng Hàn cần tải thêm model (13 MB) ở *OCR models*; *manga-ocr* (460 MB) đọc chữ Nhật viết tay chính xác hơn. Model tìm bóng thoại cũng tải lại được ở đây nếu thiếu.
 
-**Phím tắt** (đổi được ở ⚙ → More):
+**Phím tắt** (mặc định; đổi tuỳ ý ở ⚙ → **Shortcuts**, bấm vào một mục rồi nhấn tổ hợp phím mới, kể cả nút phụ của chuột; *Reset all to default* đưa tất cả về như dưới):
 
 | Phím | |
 |---|---|
 | `Alt + T` | Dịch ngay |
 | `Esc` | Ẩn bản dịch |
-| `Ctrl + Alt + P` / `M` / `R` | Tạm dừng · đổi Auto ↔ Hotkey · kéo khung |
-| `Ctrl + Alt + V` | Visual novel: bật / tắt tự quét |
+| `Ctrl + Alt + P` / `M` / `R` | Tạm dừng · đổi Auto ↔ Hotkey (cả manga, webtoon và visual novel) · kéo khung |
 | `Ctrl + Alt + H` / `Q` | Ẩn / hiện thanh · thoát |
 
-**Cài đặt (⚙):** *Reading order* (Manga / Webtoon / Visual novel), *Scanning* (Auto / Hotkey, cả trang hay khung), *Language*, *Look* (font, cỡ chữ, màu), *Text to speech*.
+**Cài đặt (⚙):** *Reading order* (Manga / Webtoon / Visual novel), *Scanning* (Auto / Hotkey, cả trang hay khung), *Language*, *Look* (font, cỡ chữ, màu), *Text to speech*, *Shortcuts*.
 
 ## 🎮 Visual novel
 
 1. ⚙ → **Reading order → Visual novel**, kéo khung (⛶) sát quanh hộp thoại của game.
-2. Bấm `Alt + T`, hoặc bật tự quét (`Ctrl + Alt + V`) để tự dịch mỗi câu mới.
+2. Chế độ **Auto** tự dịch mỗi câu mới; chế độ **Hotkey** thì bấm `Alt + T` để dịch. Đổi qua lại bằng `Ctrl + Alt + M` hoặc ⚙ → Scanning, giống manga.
 
 - Game phải chạy **cửa sổ** hoặc **borderless**.
 - Tự quét không dịch vì cảnh sau hộp thoại chuyển động? Tăng độ đục hộp thoại trong game, hoặc bật ⚙ → Scanning → **Ignore moving background**.

@@ -64,7 +64,7 @@ up in screenshots, so it is never translated. Menus open upwards when the bar si
 | Server chip | Pick server and model, auto-switch toggles, API keys |
 | ↻ ❚❚ 👁 | Translate now · pause/resume · show/hide overlay |
 | ⛶ | Draw a frame around the comic page (amber when your frame is used) |
-| ⚙ | Settings (short top level, submenus for the rest): Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size, colors, Box & overlay ›), OCR device ›, Read aloud ›, Hotkeys ›, More › (translation record, taskbar, developer mode), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
+| ⚙ | Settings (short top level, submenus for the rest): Mode ›, Reading order ›, Source language ›, Capture ›, Text › (font, minimum size, colors, Box & overlay ›), OCR device ›, Read aloud ›, Shortcuts › (all 8 hotkeys, each opens the key dialog; duplicates are refused), More › (translation record, taskbar, developer mode), API keys. The menu stays open while you change things; ⚙ again, Esc or a click outside closes it |
 | `‹` / `✕` | Collapse (keeps ● and ↻ ❚❚ 👁 ⛶) / quit |
 
 ## Capture frame (Region)
@@ -123,7 +123,7 @@ red = snapped text, blue = bubble) and the raw model output in `logs\debug\`.
 | `hotkey_*` | see above | e.g. `ctrl+shift+y`, `f8`, `alt+\``. `hotkey_translate` may also be `mouse3` / `mouse4` / `mouse5` (wheel click / side buttons, optionally with modifiers); set it from ⚙ → Hotkeys → Translate key… |
 | `layout` = `vn` | | Visual novel mode: `app/vn.py` (one small read + one translation per line, no tiles / bubbles) |
 | `vn_region` | `null` | Text box frame (physical px), separate from `region` |
-| `vn_auto` | `false` | Auto-scan when the text box changes (`hotkey_vn_auto`, `Ctrl+Alt+V`) |
+| `vn_auto` | `false` | Auto-scan when the text box changes. Always equal to `mode == "auto"` (one Auto / Hotkey switch, `hotkey_mode`; `Settings.update` keeps them together) |
 | `hotkey_toolbar` | `ctrl+alt+h` | Hide / show the toolbar; every function keeps working. One key for both; set it from ⚙ → **Hotkeys → Show / hide toolbar key…** |
 | `taskbar_icon` | `true` | Taskbar button (right-click → Close window quits; a click shows the toolbar). Hidden together with the toolbar |
 | `vn_poll_ms`, `vn_stable_ms`, `vn_change_pct` | `200`, `350`, `0.3` | Watcher: look interval, quiet time before a scan, % of the box that must change |

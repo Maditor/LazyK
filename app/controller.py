@@ -72,7 +72,7 @@ class App:
             {"translate": settings["hotkey_translate"], "hide": settings["hotkey_hide"],
              "pause": settings["hotkey_pause"], "quit": settings["hotkey_quit"],
              "mode": settings["hotkey_mode"], "region": settings["hotkey_region"],
-             "vn_auto": settings["hotkey_vn_auto"], "toolbar": settings["hotkey_toolbar"]},
+             "toolbar": settings["hotkey_toolbar"]},
             on_hotkey=lambda name: self.q.put(("hotkey", name)),
             on_scroll=lambda x, y: self.q.put(("scroll", x, y)),
             on_click=lambda x, y, down: self.q.put(("click", x, y, down)),
@@ -219,8 +219,6 @@ class App:
                 self.toggle_mode()
             elif name == "region":
                 self.select_region()
-            elif name == "vn_auto":
-                self.toggle_vn_auto()
             elif name == "toolbar":
                 self.toggle_toolbar()
         elif kind == "tray":  # from the tray icon's thread
@@ -538,13 +536,8 @@ class App:
             self.root.after(300, self.select_region)  # first time: draw a frame around the text box
 
     def toggle_vn_auto(self):
-        self.s.update(vn_auto=not self.s["vn_auto"])
-        if self.s["layout"] != "vn":
-            self.set_layout("vn")
-        self.toolbar.refresh()
-        on = self.s["vn_auto"]
-        self._status("info", "VN auto-scan " + ("ON" if on else "OFF"), auto_hide=1500)
-        self.rerender()  # the overlay is (not) excluded from screen captures while auto-scan is on
+        """Visual novel auto-scan = the Auto / Hotkey switch (one switch for every reading order)."""
+        self.toggle_mode()
 
     # ------------------------------------------------------------ presets
     def apply_preset(self, name):
@@ -786,13 +779,13 @@ class App:
 
     # ------------------------------------------------------------ translate key
     HOTKEY_KEYS = ("hotkey_translate", "hotkey_hide", "hotkey_pause", "hotkey_quit", "hotkey_mode",
-                   "hotkey_region", "hotkey_vn_auto", "hotkey_toolbar")
+                   "hotkey_region", "hotkey_toolbar")
 
     def _bindings(self):
         return {"translate": self.s["hotkey_translate"], "hide": self.s["hotkey_hide"],
                 "pause": self.s["hotkey_pause"], "quit": self.s["hotkey_quit"],
                 "mode": self.s["hotkey_mode"], "region": self.s["hotkey_region"],
-                "vn_auto": self.s["hotkey_vn_auto"], "toolbar": self.s["hotkey_toolbar"]}
+                "toolbar": self.s["hotkey_toolbar"]}
 
     def open_key_dialog(self, setting="hotkey_translate", title="Translate key", anchor=None):
         from .config import DEFAULTS
@@ -817,6 +810,16 @@ class App:
             self.tray.refresh()  # the menu shows the toolbar key
         self._status("info", f"{title}: {pretty(spec)}", auto_hide=2500)
         self.restore_focus()
+
+    def reset_hotkeys(self):
+        """Every shortcut back to its default."""
+        from .config import DEFAULTS
+        self.s.update(**{k: DEFAULTS[k] for k in self.HOTKEY_KEYS})
+        self.watcher.set_bindings(self._bindings())
+        self.toolbar.refresh()
+        if self.tray:
+            self.tray.refresh()
+        self._status("info", "Shortcuts reset to default", auto_hide=2500)
 
     def set_translate_key(self, spec):
         self.set_hotkey("hotkey_translate", spec, "Translate key")
@@ -1034,10 +1037,17 @@ class App:
             self.overlay.set_hover(None)
 
     def toggle_mode(self):
+        """Auto <-> Hotkey. In a visual novel, Auto is the auto-scan (translate each new line)."""
         self.s.update(mode="hotkey" if self.s["mode"] == "auto" else "auto")
         self._cancel_auto_timer()
         self.toolbar.refresh()
-        self._status("info", "Auto" if self.s["mode"] == "auto" else "Hotkey only", auto_hide=1500)
+        auto = self.s["mode"] == "auto"
+        if self.s["layout"] == "vn":
+            self._status("info", "Auto: translates each new line" if auto
+                         else f"Hotkey: {pretty(self.s['hotkey_translate'])} to translate", auto_hide=1500)
+            self.rerender()  # the overlay is (not) excluded from screen captures while auto-scan is on
+        else:
+            self._status("info", "Auto" if auto else "Hotkey only", auto_hide=1500)
 
     def _cancel_auto_timer(self):
         if self._auto_job:

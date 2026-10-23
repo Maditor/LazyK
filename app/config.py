@@ -62,7 +62,6 @@ DEFAULTS = {
     "hotkey_hide": "esc",
     "hotkey_pause": "ctrl+alt+p",
     "hotkey_region": "ctrl+alt+r",  # draw a capture frame
-    "hotkey_vn_auto": "ctrl+alt+v",  # visual novel: auto-scan on / off
     "hotkey_toolbar": "ctrl+alt+h",  # hide / show the toolbar (every function keeps working)
     # Ctrl+Alt: Alt+Shift+<key> clashed with Ren'Py games (Alt+Shift+V = self-voicing) and Alt+Shift alone
     # switches the Windows keyboard layout
@@ -72,7 +71,7 @@ DEFAULTS = {
     "scroll_watch": True,           # also detect scrolling by watching the page (touchpad, scrollbar drag)
     # Visual novel mode
     "vn_region": None,              # [x, y, w, h] physical px: the game's text box
-    "vn_auto": False,               # scan by itself when the text in the box changes (own on / off)
+    "vn_auto": False,               # visual novel auto-scan: always the same as mode == "auto" (one switch)
     "vn_poll_ms": 100,              # how often the text box is looked at while auto-scan is on
     "vn_stable_ms": 200,            # text must stay unchanged this long (typewriter effect) before a scan
                                     # (AI reading the image: at least 350, a scan started too early costs quota)
@@ -177,6 +176,11 @@ class Settings:
         return self.data.get(key, default)
 
     def update(self, **kw):
+        # Auto / Hotkey is one switch for every reading order: in a visual novel "Auto" is the auto-scan
+        if "mode" in kw:
+            kw["vn_auto"] = kw["mode"] == "auto"
+        elif "vn_auto" in kw:
+            kw["mode"] = "auto" if kw["vn_auto"] else "hotkey"
         self.data.update(kw)
         self.save()
 
@@ -230,11 +234,14 @@ class Settings:
         if saved.get("_hotkeys_v2") != 1:
             # the old Alt+Shift defaults clashed with Ren'Py visual novels: move only keys still on the old default
             old = {"hotkey_mode": "alt+shift+a", "hotkey_pause": "alt+shift+t", "hotkey_region": "alt+shift+r",
-                   "hotkey_vn_auto": "alt+shift+v", "hotkey_toolbar": "alt+shift+h"}
+                   "hotkey_toolbar": "alt+shift+h"}
             for k, v in old.items():
                 if str(self.data.get(k, "")).replace(" ", "").lower() == v:
                     self.data[k] = DEFAULTS[k]
             self.data["_hotkeys_v2"] = 1
+        # one Auto / Hotkey switch for manga, webtoon and visual novel (the VN auto-scan key is gone)
+        self.data["vn_auto"] = self.data.get("mode", "auto") == "auto"
+        self.data.pop("hotkey_vn_auto", None)
         for k in ("vn_source", "luna_port", "hook_engine", "textractor_cli", "textractor_cli32",
                   "textractor_cli64", "hook_last_game", "hook_games"):
             self.data.pop(k, None)  # the game-text hook was removed

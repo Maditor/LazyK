@@ -115,6 +115,7 @@ def main():
     ap.add_argument("--get-models", action="store_true", help="download the speech bubble model (setup.bat)")
     args = ap.parse_args()
 
+    no_console = sys.stdout is None  # pythonw.exe (run.bat) or the windowed exe
     fix_streams()
     if args.get_models:
         sys.exit(get_models())
@@ -136,8 +137,22 @@ def main():
         run_image(args.image, settings)
         return
 
-    from app.controller import App
-    App(settings, demo=args.demo).run()
+    try:
+        from app.controller import App
+        App(settings, demo=args.demo).run()
+    except Exception as e:  # without a console window an error at start would just vanish: show it
+        logging.getLogger("crash").critical("LazyK could not start", exc_info=True)
+        if no_console:
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                r = tk.Tk()
+                r.withdraw()
+                messagebox.showerror("LazyK", f"LazyK could not start:\n{e}\n\nDetails: logs\\lazyk.log")
+                r.destroy()
+            except Exception:
+                pass
+        raise
 
 
 if __name__ == "__main__":
